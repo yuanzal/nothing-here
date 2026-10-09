@@ -2,31 +2,45 @@ from __future__ import annotations
 
 import ctypes
 from ctypes import wintypes
-from typing import Sequence
+from typing import Optional, Sequence
 
 from PyQt6.QtCore import QRect
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from nothing_here.ui.card_window import CARD_GAP, CARD_WIDTH, MARGIN_RIGHT, MARGIN_TOP
 
-GWL_STYLE = -16
 GWL_EXSTYLE = -20
-WS_CHILD = 0x40000000
-WS_POPUP = 0x80000000
-WS_EX_LAYERED = 0x00080000
 WS_EX_TRANSPARENT = 0x00000020
-WS_EX_NOACTIVATE = 0x08000000
-WS_EX_TOOLWINDOW = 0x00000080
 SMTO_NORMAL = 0x0000
 SWP_NOSIZE = 0x0001
 SWP_NOMOVE = 0x0002
-SWP_NOZORDER = 0x0004
 SWP_NOACTIVATE = 0x0010
 SWP_FRAMECHANGED = 0x0020
 SWP_SHOWWINDOW = 0x0040
 WM_SPAWN_WORKER = 0x052C
+HWND_TOP = 0
+HWND_TOPMOST = -1
 
 WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+
+def _as_hwnd(value: int) -> wintypes.HWND:
+    return wintypes.HWND(value & 0xFFFFFFFFFFFFFFFF)
+
+
+def clamp_origin(
+    x: int,
+    y: int,
+    width: int,
+    height: int,
+    work_x: int,
+    work_y: int,
+    work_w: int,
+    work_h: int,
+) -> tuple[int, int]:
+    max_x = work_x + max(0, work_w - width)
+    max_y = work_y + max(0, work_h - height)
+    return (min(max(x, work_x), max_x), min(max(y, work_y), max_y))
 
 
 def _user32() -> ctypes.WinDLL:
@@ -75,11 +89,14 @@ class DesktopHost:
     def __init__(self) -> None:
         self._user32 = _user32()
         self._enum_proc = None
-        self._worker = self._find_workerw()
+        # Parent is the desktop window that owns the icons, not the WorkerW
+        # behind them. A window behind the icons never receives the mouse.
+        self._desktop = self._find_icon_host()
+        self.floating = False
 
     @property
     def available(self) -> bool:
-        return bool(self._worker)
+        return bool(self._desktop)
 
     def work_rect(self) -> QRect:
         screen = QApplication.primaryScreen()
@@ -88,74 +105,107 @@ class DesktopHost:
         return screen.availableGeometry()
 
     def attach(self, widget: QWidget) -> bool:
-        if not self._worker:
-            return False
+        return self.prepare(widget, self.floating)
+
+    def prepare(self, widget: QWidget, floating: bool) -> bool:
         hwnd = wintypes.HWND(int(widget.winId()))
-        self._user32.SetParent(hwnd, wintypes.HWND(self._worker))
-        style = self._user32.GetWindowLongPtrW(hwnd, GWL_STYLE)
-        style = (style | WS_CHILD) & ~WS_POPUP
-        self._user32.SetWindowLongPtrW(hwnd, GWL_STYLE, style)
-        ex = self._user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
-        ex |= WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
-        self._user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex)
-        self._user32.SetWindowPos(
-            hwnd,
-            wintypes.HWND(0),
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
-        )
+        if floating:
+            # A window that has already been parented to the desktop will not
+            # accept HWND_TOPMOST. Callers recreate the card before this.
+            self.floating = True
+            self._stack(hwnd, HWND_TOPMOST)
+        else:
+            if not self._desktop:
+                return False
+            self.floating = False
+            self._user32.SetParent(hwnd, wintypes.HWND(self._desktop))
+            self._stack(hwnd, HWND_TOP)
+        self.set_click_through(widget, False)
         return True
 
     def set_click_through(self, widget: QWidget, enabled: bool) -> None:
+        # The card itself must keep receiving the mouse, otherwise it cannot be dragged.
+        # Clicks outside the card still hit the desktop, because the window is only card-sized.
+        del enabled
         from PyQt6.QtCore import Qt
 
-        widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, enabled)
+        widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
         hwnd = wintypes.HWND(int(widget.winId()))
         ex = self._user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
-        ex |= WS_EX_LAYERED | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW
-        if enabled:
-            ex |= WS_EX_TRANSPARENT
-        else:
-            ex &= ~WS_EX_TRANSPARENT
-        self._user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex)
-        self._user32.SetWindowPos(
-            hwnd,
-            wintypes.HWND(0),
-            0,
-            0,
-            0,
-            0,
-            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
-        )
+        if ex & WS_EX_TRANSPARENT:
+            self._user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex & ~WS_EX_TRANSPARENT)
+            self._stack(hwnd, self._insert_after())
 
-    def place(self, widgets: Sequence[QWidget], min_front_height: int) -> None:
+    def place(
+        self,
+        widgets: Sequence[QWidget],
+        min_front_height: int,
+        origins: Sequence[Optional[tuple[int, int]]],
+    ) -> list[tuple[int, int]]:
         work = self.work_rect()
-        x = work.right() - MARGIN_RIGHT - CARD_WIDTH
+        placed: list[tuple[int, int]] = []
         y = work.top() + MARGIN_TOP
         count = len(widgets)
         for index, widget in enumerate(widgets):
-            remaining = count - index - 1
-            reserved = remaining * (min_front_height + CARD_GAP)
-            max_height = work.bottom() - y - reserved
             preferred = widget.preferred_height()  # type: ignore[attr-defined]
-            height = max(1, min(preferred, max_height))
-            widget.setGeometry(x, y, CARD_WIDTH, height)
-            hwnd = wintypes.HWND(int(widget.winId()))
-            self._user32.SetWindowPos(
-                hwnd,
-                wintypes.HWND(0),
-                x,
-                y,
-                CARD_WIDTH,
-                height,
-                SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW,
-            )
-            y += height + CARD_GAP
+            saved = origins[index] if index < len(origins) else None
+            if saved is None:
+                remaining = count - index - 1
+                reserved = remaining * (min_front_height + CARD_GAP)
+                max_height = work.top() + work.height() - y - reserved
+                height = max(1, min(preferred, max_height))
+                x = work.left() + work.width() - MARGIN_RIGHT - CARD_WIDTH
+                origin = (x, y)
+                y += height + CARD_GAP
+            else:
+                max_height = work.height()
+                height = max(1, min(preferred, max_height))
+                origin = saved
+            origin = self.move(widget, origin[0], origin[1], height)
+            placed.append(origin)
+        return placed
 
-    def _find_workerw(self) -> int:
+    def move(self, widget: QWidget, x: int, y: int, height: Optional[int] = None) -> tuple[int, int]:
+        work = self.work_rect()
+        preferred = widget.preferred_height()  # type: ignore[attr-defined]
+        if height is None:
+            height = min(preferred, work.height())
+        height = max(1, min(preferred, height, work.height()))
+        x, y = clamp_origin(x, y, CARD_WIDTH, height, work.left(), work.top(), work.width(), work.height())
+        self._commit_geometry(widget, x, y, CARD_WIDTH, height)
+        widget.set_screen_origin(x, y)  # type: ignore[attr-defined]
+        return (x, y)
+
+    def _commit_geometry(self, widget: QWidget, x: int, y: int, width: int, height: int) -> None:
+        # Qt geometry is in logical pixels. SetWindowPos wants physical pixels.
+        ratio = widget.devicePixelRatioF()
+        widget.setGeometry(x, y, width, height)
+        hwnd = wintypes.HWND(int(widget.winId()))
+        self._user32.SetWindowPos(
+            hwnd,
+            self._insert_after(),
+            int(round(x * ratio)),
+            int(round(y * ratio)),
+            int(round(width * ratio)),
+            int(round(height * ratio)),
+            SWP_NOACTIVATE | SWP_SHOWWINDOW,
+        )
+
+    def _insert_after(self) -> wintypes.HWND:
+        return _as_hwnd(HWND_TOPMOST if self.floating else HWND_TOP)
+
+    def _stack(self, hwnd: wintypes.HWND, insert_after: int) -> None:
+        self._user32.SetWindowPos(
+            hwnd,
+            _as_hwnd(insert_after),
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
+        )
+
+    def _find_icon_host(self) -> int:
         user32 = self._user32
         progman = user32.FindWindowW("Progman", None)
         if not progman:
@@ -166,7 +216,7 @@ class DesktopHost:
         def enum_proc(hwnd: int, _lparam: int) -> bool:
             shell = user32.FindWindowExW(hwnd, None, "SHELLDLL_DefView", None)
             if shell:
-                found.value = user32.FindWindowExW(None, hwnd, "WorkerW", None)
+                found.value = hwnd
             return True
 
         self._enum_proc = enum_proc

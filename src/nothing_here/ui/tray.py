@@ -13,15 +13,16 @@ class Tray(QObject):
     show_cards = pyqtSignal()
     hide_cards = pyqtSignal()
     source_chosen = pyqtSignal(str)
+    layer_chosen = pyqtSignal(bool)
     quit_requested = pyqtSignal()
 
-    def __init__(self, sources: Sequence[VocabSource], active_source: str) -> None:
+    def __init__(self, sources: Sequence[VocabSource], active_source: str, floating: bool) -> None:
         super().__init__()
         self._icon = QSystemTrayIcon(make_tray_icon())
         self._icon.setToolTip("Nothing Here")
         menu = QMenu()
         show_action = menu.addAction("显示卡片")
-        hide_action = menu.addAction("隐藏卡片")
+        hide_action = menu.addAction("隐藏卡片    Ctrl+Alt+H")
         vocab_menu = menu.addMenu("词库")
         self._group = QActionGroup(menu)
         self._group.setExclusive(True)
@@ -37,6 +38,11 @@ class Tray(QObject):
                 lambda checked, source_id=source.source_id: self._on_source(checked, source_id)
             )
         menu.addSeparator()
+        self._float_action = menu.addAction("浮在窗口上")
+        self._float_action.setCheckable(True)
+        self._float_action.setChecked(floating)
+        self._float_action.triggered.connect(self.layer_chosen.emit)
+        menu.addSeparator()
         quit_action = menu.addAction("退出")
         show_action.triggered.connect(self.show_cards.emit)
         hide_action.triggered.connect(self.hide_cards.emit)
@@ -51,6 +57,11 @@ class Tray(QObject):
             QSystemTrayIcon.MessageIcon.Warning,
             5000,
         )
+
+    def set_floating(self, floating: bool) -> None:
+        self._float_action.blockSignals(True)
+        self._float_action.setChecked(floating)
+        self._float_action.blockSignals(False)
 
     def set_active_source(self, source_id: str) -> None:
         action = self._source_actions.get(source_id)
