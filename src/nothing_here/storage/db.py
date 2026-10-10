@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sqlite3
 from dataclasses import dataclass
@@ -20,13 +21,18 @@ def default_db_path() -> Path:
 class AppState:
     hidden: bool
     active_source: str
-    slots: tuple[Optional[str], Optional[str], Optional[str]]
-    origins: tuple[
-        Optional[tuple[int, int]],
-        Optional[tuple[int, int]],
-        Optional[tuple[int, int]],
-    ] = (None, None, None)
+    word: Optional[str]
+    origin: Optional[tuple[int, int]] = None
     floating: bool = False
+    daily_goal: int = 10
+
+
+@dataclass(frozen=True)
+class DailyRecord:
+    day: str
+    collected: tuple[str, ...]
+    queue: tuple[str, ...]
+    phase: int
 
 
 class Store:
@@ -62,14 +68,23 @@ class Store:
                 y2 INTEGER,
                 x3 INTEGER,
                 y3 INTEGER,
-                floating INTEGER NOT NULL DEFAULT 0
+                floating INTEGER NOT NULL DEFAULT 0,
+                daily_goal INTEGER NOT NULL DEFAULT 10
+            );
+
+            CREATE TABLE IF NOT EXISTS daily_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                day TEXT NOT NULL,
+                collected TEXT NOT NULL,
+                queue TEXT NOT NULL,
+                phase INTEGER NOT NULL
             );
             """
         )
-        self._ensure_origin_columns()
+        self._ensure_columns()
         self._conn.commit()
 
-    def _ensure_origin_columns(self) -> None:
+    def _ensure_columns(self) -> None:
         existing = {str(row[1]) for row in self._conn.execute("PRAGMA table_info(app_state)")}
         for name in ("x1", "y1", "x2", "y2", "x3", "y3"):
             if name not in existing:
@@ -77,6 +92,10 @@ class Store:
         if "floating" not in existing:
             self._conn.execute(
                 "ALTER TABLE app_state ADD COLUMN floating INTEGER NOT NULL DEFAULT 0"
+            )
+        if "daily_goal" not in existing:
+            self._conn.execute(
+                "ALTER TABLE app_state ADD COLUMN daily_goal INTEGER NOT NULL DEFAULT 10"
             )
 
     def get_progress(self, word: str) -> tuple[int, int]:
@@ -114,60 +133,128 @@ class Store:
     def load_state(self) -> AppState:
         row = self._conn.execute(
             """
-            SELECT hidden, active_source, slot1, slot2, slot3, x1, y1, x2, y2, x3, y3, floating
+            SELECT hidden, active_source, slot1, slot2, slot3,
+                   x1, y1, x2, y2, x3, y3, floating, daily_goal
             FROM app_state WHERE id = 1
             """
         ).fetchone()
         if row is None:
-            return AppState(hidden=False, active_source="ielts", slots=(None, None, None))
-        hidden, active_source, slot1, slot2, slot3, x1, y1, x2, y2, x3, y3, floating = row
+            return AppState(hidden=False, active_source="ielts", word=None)
+        (
+            hidden,
+            active_source,
+            slot1,
+            slot2,
+            slot3,
+            x1,
+            y1,
+            x2,
+            y2,
+            x3,
+            y3,
+            floating,
+            daily_goal,
+        ) = row
+        word, origin = _migrate_current(
+            slot1,
+            slot2,
+            slot3,
+            _origin(x1, y1),
+            _origin(x2, y2),
+            _origin(x3, y3),
+        )
         return AppState(
             hidden=bool(hidden),
             active_source=str(active_source),
-            slots=(
-                _slot(slot1),
-                _slot(slot2),
-                _slot(slot3),
-            ),
-            origins=(_origin(x1, y1), _origin(x2, y2), _origin(x3, y3)),
+            word=word,
+            origin=origin,
             floating=bool(floating),
+            daily_goal=int(daily_goal),
         )
 
     def save_state(self, state: AppState) -> None:
+        x, y = _pair(state.origin)
         self._conn.execute(
             """
             INSERT INTO app_state(
                 id, hidden, active_source, slot1, slot2, slot3,
-                x1, y1, x2, y2, x3, y3, floating
+                x1, y1, x2, y2, x3, y3, floating, daily_goal
             )
-            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (1, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL, NULL, NULL, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 hidden = excluded.hidden,
                 active_source = excluded.active_source,
                 slot1 = excluded.slot1,
-                slot2 = excluded.slot2,
-                slot3 = excluded.slot3,
+                slot2 = NULL,
+                slot3 = NULL,
                 x1 = excluded.x1,
                 y1 = excluded.y1,
-                x2 = excluded.x2,
-                y2 = excluded.y2,
-                x3 = excluded.x3,
-                y3 = excluded.y3,
-                floating = excluded.floating
+                x2 = NULL,
+                y2 = NULL,
+                x3 = NULL,
+                y3 = NULL,
+                floating = excluded.floating,
+                daily_goal = excluded.daily_goal
             """,
             (
                 1 if state.hidden else 0,
                 state.active_source,
-                state.slots[0],
-                state.slots[1],
-                state.slots[2],
-                *_pair(state.origins[0]),
-                *_pair(state.origins[1]),
-                *_pair(state.origins[2]),
+                state.word,
+                x,
+                y,
                 1 if state.floating else 0,
+                state.daily_goal,
             ),
         )
         self._conn.commit()
+
+    def load_daily(self) -> Optional[DailyRecord]:
+        row = self._conn.execute(
+            "SELECT day, collected, queue, phase FROM daily_state WHERE id = 1"
+        ).fetchone()
+        if row is None:
+            return None
+        day, collected, queue, phase = row
+        return DailyRecord(
+            day=str(day),
+            collected=_words(collected),
+            queue=_words(queue),
+            phase=max(0, min(2, int(phase))),
+        )
+
+    def save_daily(self, record: DailyRecord) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO daily_state(id, day, collected, queue, phase)
+            VALUES (1, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                day = excluded.day,
+                collected = excluded.collected,
+                queue = excluded.queue,
+                phase = excluded.phase
+            """,
+            (
+                record.day,
+                json.dumps(list(record.collected), ensure_ascii=False),
+                json.dumps(list(record.queue), ensure_ascii=False),
+                record.phase,
+            ),
+        )
+        self._conn.commit()
+
+
+def _migrate_current(
+    slot1: object,
+    slot2: object,
+    slot3: object,
+    origin1: Optional[tuple[int, int]],
+    origin2: Optional[tuple[int, int]],
+    origin3: Optional[tuple[int, int]],
+) -> tuple[Optional[str], Optional[tuple[int, int]]]:
+    for slot, origin in ((_slot(slot1), origin1), (_slot(slot2), origin2), (_slot(slot3), origin3)):
+        if slot:
+            return slot, origin
+    return None, None
 
 
 def _slot(value: object) -> Optional[str]:
@@ -187,3 +274,10 @@ def _pair(origin: Optional[tuple[int, int]]) -> tuple[Optional[int], Optional[in
     if origin is None:
         return (None, None)
     return (origin[0], origin[1])
+
+
+def _words(value: object) -> tuple[str, ...]:
+    if not value:
+        return ()
+    data = json.loads(str(value))
+    return tuple(str(item).casefold() for item in data if str(item))

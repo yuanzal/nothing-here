@@ -83,6 +83,7 @@ class _Body(QWidget):
 class CardWindow(QWidget):
     recognized = pyqtSignal()
     unknown = pyqtSignal()
+    reveal_toggled = pyqtSignal()
     moved = pyqtSignal(int, int)
     move_finished = pyqtSignal(int, int)
     layer_requested = pyqtSignal()
@@ -124,6 +125,12 @@ class CardWindow(QWidget):
         self._translation.setFont(_px_font("Microsoft YaHei", 14))
         self._translation.setStyleSheet(f"color: {TRANSLATION_COLOR}; background: transparent;")
 
+        self._reveal = QPushButton("译文")
+        self._reveal.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._reveal.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._reveal.setStyleSheet(_button_style(KNOWN_BG))
+        self._reveal.clicked.connect(self.reveal_toggled.emit)
+
         self._known = QPushButton("认识")
         self._unknown = QPushButton("不认识")
         self._known.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -153,7 +160,11 @@ class CardWindow(QWidget):
 
         for label in (self._word, self._phonetic, self._stats, self._translation):
             label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-            layout.addWidget(label)
+        layout.addWidget(self._word)
+        layout.addWidget(self._phonetic)
+        layout.addWidget(self._stats)
+        layout.addWidget(self._reveal)
+        layout.addWidget(self._translation)
         layout.addWidget(self._button_row)
         layout.addWidget(self._layer)
 
@@ -221,6 +232,7 @@ class CardWindow(QWidget):
         self._stats.setText(stats_text(correct, reviews))
         self._translation.setText(translation)
         show_back = face is Face.BACK
+        self._reveal.setText("收起" if show_back else "译文")
         self._translation.setVisible(show_back)
         self._button_row.setVisible(show_back)
         self._position_body()

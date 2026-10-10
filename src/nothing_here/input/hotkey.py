@@ -6,11 +6,10 @@ from pynput import keyboard
 
 
 class HotkeyListener:
-    def __init__(self, on_toggle: Callable[[], None], on_visibility: Callable[[], None]) -> None:
+    def __init__(self, on_visibility: Callable[[], None]) -> None:
         self._hotkeys = keyboard.GlobalHotKeys(
             {
-                "<ctrl>+<alt>+s": on_toggle,
-                "<ctrl>+<alt>+h": on_visibility,
+                "<ctrl>+<alt>+s": on_visibility,
             }
         )
 

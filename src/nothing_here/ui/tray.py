@@ -4,25 +4,36 @@ from typing import Sequence
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QActionGroup, QColor, QFont, QIcon, QPainter, QPixmap
-from PyQt6.QtWidgets import QMenu, QSystemTrayIcon
+from PyQt6.QtWidgets import QInputDialog, QMenu, QSystemTrayIcon
 
+from nothing_here.domain.daily import GOAL_MAX, GOAL_MIN
 from nothing_here.vocab.protocol import VocabSource
 
 
 class Tray(QObject):
     show_cards = pyqtSignal()
     hide_cards = pyqtSignal()
+    goal_chosen = pyqtSignal(int)
     source_chosen = pyqtSignal(str)
     layer_chosen = pyqtSignal(bool)
     quit_requested = pyqtSignal()
 
-    def __init__(self, sources: Sequence[VocabSource], active_source: str, floating: bool) -> None:
+    def __init__(
+        self,
+        sources: Sequence[VocabSource],
+        active_source: str,
+        floating: bool,
+        collected: int = 0,
+        goal: int = 10,
+    ) -> None:
         super().__init__()
+        self._goal = goal
         self._icon = QSystemTrayIcon(make_tray_icon())
         self._icon.setToolTip("Nothing Here")
         menu = QMenu()
         show_action = menu.addAction("显示卡片")
-        hide_action = menu.addAction("隐藏卡片    Ctrl+Alt+H")
+        hide_action = menu.addAction("隐藏卡片    Ctrl+Alt+S")
+        self._goal_action = menu.addAction(_goal_label(collected, goal))
         vocab_menu = menu.addMenu("词库")
         self._group = QActionGroup(menu)
         self._group.setExclusive(True)
@@ -46,6 +57,7 @@ class Tray(QObject):
         quit_action = menu.addAction("退出")
         show_action.triggered.connect(self.show_cards.emit)
         hide_action.triggered.connect(self.hide_cards.emit)
+        self._goal_action.triggered.connect(self._edit_goal)
         quit_action.triggered.connect(self.quit_requested.emit)
         self._icon.setContextMenu(menu)
         self._icon.show()
@@ -68,9 +80,29 @@ class Tray(QObject):
         if action is not None:
             action.setChecked(True)
 
+    def set_daily_progress(self, collected: int, goal: int) -> None:
+        self._goal = goal
+        self._goal_action.setText(_goal_label(collected, goal))
+
+    def _edit_goal(self) -> None:
+        value, accepted = QInputDialog.getInt(
+            None,
+            "每日目标",
+            "每天收下的不认识词数",
+            self._goal,
+            GOAL_MIN,
+            GOAL_MAX,
+        )
+        if accepted:
+            self.goal_chosen.emit(value)
+
     def _on_source(self, checked: bool, source_id: str) -> None:
         if checked:
             self.source_chosen.emit(source_id)
+
+
+def _goal_label(collected: int, goal: int) -> str:
+    return f"每日目标 {collected}/{goal}"
 
 
 def make_tray_icon() -> QIcon:

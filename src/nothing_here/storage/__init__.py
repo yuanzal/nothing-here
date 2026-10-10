@@ -1,3 +1,3 @@
-from .db import AppState, Store, default_db_path
+from .db import AppState, DailyRecord, Store, default_db_path
 
-__all__ = ["AppState", "Store", "default_db_path"]
+__all__ = ["AppState", "DailyRecord", "Store", "default_db_path"]
