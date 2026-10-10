@@ -6,8 +6,6 @@ import json
 import sys
 from pathlib import Path
 
-from example_sentences import sentence_for
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = REPO_ROOT / "data" / "ielts.json"
 
@@ -16,7 +14,8 @@ def has_ielts_tag(tag: str) -> bool:
     return "ielts" in tag.split()
 
 
-def convert(csv_path: Path) -> list[dict[str, str]]:
+def convert(csv_path: Path, examples: dict[str, str] | None = None) -> list[dict[str, str]]:
+    kept = examples or {}
     rows: list[dict[str, str]] = []
     with csv_path.open(encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
@@ -26,16 +25,28 @@ def convert(csv_path: Path) -> list[dict[str, str]]:
             word = (rec.get("word") or "").strip()
             if not word:
                 continue
-            translation = rec.get("translation") or ""
             rows.append(
                 {
                     "word": word,
                     "phonetic": rec.get("phonetic") or "",
-                    "translation": translation,
-                    "example": sentence_for(word, translation),
+                    "translation": rec.get("translation") or "",
+                    "example": kept.get(word.casefold(), ""),
                 }
             )
     return rows
+
+
+def _saved_examples(path: Path) -> dict[str, str]:
+    if not path.is_file():
+        return {}
+    rows = json.loads(path.read_text(encoding="utf-8"))
+    saved: dict[str, str] = {}
+    for row in rows:
+        word = str(row.get("word") or "").strip().casefold()
+        example = str(row.get("example") or "").strip()
+        if word and example:
+            saved[word] = example
+    return saved
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -48,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"CSV not found: {args.csv_path}", file=sys.stderr)
         return 1
 
-    rows = convert(args.csv_path)
+    rows = convert(args.csv_path, _saved_examples(args.output))
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
         json.dumps(rows, ensure_ascii=False, indent=2) + "\n",
