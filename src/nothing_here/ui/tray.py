@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Optional, Sequence
 
 from PyQt6.QtCore import QObject, Qt, pyqtSignal
 from PyQt6.QtGui import QAction, QActionGroup, QColor, QFont, QIcon, QPainter, QPixmap
-from PyQt6.QtWidgets import QInputDialog, QMenu, QSystemTrayIcon
+from PyQt6.QtWidgets import QColorDialog, QInputDialog, QMenu, QSystemTrayIcon
 
 from nothing_here.domain.daily import GOAL_MAX, GOAL_MIN
 from nothing_here.vocab.protocol import VocabSource
@@ -17,6 +17,10 @@ class Tray(QObject):
     source_chosen = pyqtSignal(str)
     layer_chosen = pyqtSignal(bool)
     quit_requested = pyqtSignal()
+    restore_chosen = pyqtSignal(str)
+    style_preset_chosen = pyqtSignal(str)
+    style_custom_chosen = pyqtSignal(str, str, int)
+    surface_chosen = pyqtSignal(str)
 
     def __init__(
         self,
@@ -25,15 +29,42 @@ class Tray(QObject):
         floating: bool,
         collected: int = 0,
         goal: int = 10,
+        slain_items: Sequence[tuple[str, str]] = (),
+        style_preset: str = "light",
+        text_color: Optional[str] = None,
+        fill_color: Optional[str] = None,
+        fill_alpha: Optional[int] = None,
     ) -> None:
         super().__init__()
         self._goal = goal
+        self._slain_items = list(slain_items)
+        self._style_preset = style_preset
+        self._text_color = text_color
+        self._fill_color = fill_color
+        self._fill_alpha = fill_alpha
         self._icon = QSystemTrayIcon(make_tray_icon())
         self._icon.setToolTip("Nothing Here")
         menu = QMenu()
         show_action = menu.addAction("显示卡片")
         hide_action = menu.addAction("隐藏卡片    Ctrl+Alt+S")
         self._goal_action = menu.addAction(_goal_label(collected, goal))
+        self._recycle_menu = menu.addMenu("回收站")
+        style_menu = menu.addMenu("风格")
+        self._light_action = style_menu.addAction("浅色")
+        self._dark_action = style_menu.addAction("黑底白字")
+        self._light_action.setCheckable(True)
+        self._dark_action.setCheckable(True)
+        custom_action = style_menu.addAction("自定义…")
+        surface_menu = menu.addMenu("功能面")
+        self._word_action = surface_menu.addAction("单词")
+        self._word_action.setCheckable(True)
+        self._word_action.setChecked(True)
+        self._exam_action = surface_menu.addAction("考试")
+        self._novel_action = surface_menu.addAction("小说")
+        self._exam_action.setCheckable(True)
+        self._novel_action.setCheckable(True)
+        self._exam_action.setToolTip("暂不可用")
+        self._novel_action.setToolTip("暂不可用")
         vocab_menu = menu.addMenu("词库")
         self._group = QActionGroup(menu)
         self._group.setExclusive(True)
@@ -58,8 +89,16 @@ class Tray(QObject):
         show_action.triggered.connect(self.show_cards.emit)
         hide_action.triggered.connect(self.hide_cards.emit)
         self._goal_action.triggered.connect(self._edit_goal)
+        self._light_action.triggered.connect(lambda _checked=False: self._pick_preset("light"))
+        self._dark_action.triggered.connect(lambda _checked=False: self._pick_preset("dark"))
+        custom_action.triggered.connect(self._pick_custom)
+        self._word_action.triggered.connect(self._keep_word_surface)
+        self._exam_action.triggered.connect(self._reject_surface)
+        self._novel_action.triggered.connect(self._reject_surface)
         quit_action.triggered.connect(self.quit_requested.emit)
         self._icon.setContextMenu(menu)
+        self.set_style_state(style_preset, text_color, fill_color, fill_alpha)
+        self._rebuild_slain()
         self._icon.show()
 
     def show_embed_failed(self) -> None:
@@ -84,6 +123,31 @@ class Tray(QObject):
         self._goal = goal
         self._goal_action.setText(_goal_label(collected, goal))
 
+    def set_slain_items(self, items: Sequence[tuple[str, str]]) -> None:
+        self._slain_items = list(items)
+        self._rebuild_slain()
+
+    def set_style_state(
+        self,
+        preset: str,
+        text_color: Optional[str],
+        fill_color: Optional[str],
+        fill_alpha: Optional[int],
+    ) -> None:
+        self._style_preset = preset
+        self._text_color = text_color
+        self._fill_color = fill_color
+        self._fill_alpha = fill_alpha
+        self._light_action.blockSignals(True)
+        self._dark_action.blockSignals(True)
+        self._light_action.setChecked(preset == "light")
+        self._dark_action.setChecked(preset == "dark")
+        self._light_action.blockSignals(False)
+        self._dark_action.blockSignals(False)
+
+    def set_surface(self, surface_id: str) -> None:
+        self._word_action.setChecked(surface_id == "word")
+
     def _edit_goal(self) -> None:
         value, accepted = QInputDialog.getInt(
             None,
@@ -100,9 +164,97 @@ class Tray(QObject):
         if checked:
             self.source_chosen.emit(source_id)
 
+    def _pick_preset(self, preset: str) -> None:
+        self._light_action.setChecked(preset == "light")
+        self._dark_action.setChecked(preset == "dark")
+        self.style_preset_chosen.emit(preset)
+
+    def _pick_custom(self, _checked: bool = False) -> None:
+        del _checked
+        text = QColorDialog.getColor(_text_seed(self._style_preset, self._text_color), None, "文字颜色")
+        if not text.isValid():
+            return
+        fill_seed = _fill_seed(self._style_preset, self._fill_color, self._fill_alpha)
+        fill = QColorDialog.getColor(
+            fill_seed,
+            None,
+            "底色",
+            QColorDialog.ColorDialogOption.ShowAlphaChannel,
+        )
+        if not fill.isValid():
+            return
+        alpha = fill.alpha()
+        if alpha == 255:
+            suggested = self._fill_alpha if self._fill_alpha is not None else _preset_alpha(self._style_preset)
+            suggested = min(230, max(20, suggested))
+            value, accepted = QInputDialog.getInt(
+                None,
+                "底色透明度",
+                "透明度（20–230）",
+                suggested,
+                20,
+                230,
+            )
+            if not accepted:
+                return
+            alpha = value
+        else:
+            alpha = min(230, max(20, alpha))
+        self.style_custom_chosen.emit(text.name().upper(), fill.name().upper(), alpha)
+
+    def _keep_word_surface(self, _checked: bool = False) -> None:
+        del _checked
+        self._word_action.setChecked(True)
+        self.surface_chosen.emit("word")
+
+    def _reject_surface(self, _checked: bool = False) -> None:
+        del _checked
+        self._exam_action.setChecked(False)
+        self._novel_action.setChecked(False)
+        self._word_action.setChecked(True)
+
+    def _rebuild_slain(self) -> None:
+        self._recycle_menu.clear()
+        if not self._slain_items:
+            empty = self._recycle_menu.addAction("空")
+            empty.triggered.connect(lambda _checked=False: None)
+            return
+        for key, label in self._slain_items:
+            action = self._recycle_menu.addAction(label)
+            action.triggered.connect(lambda _checked=False, word=key: self.restore_chosen.emit(word))
+
 
 def _goal_label(collected: int, goal: int) -> str:
     return f"每日目标 {collected}/{goal}"
+
+
+def _text_seed(preset: str, text_color: Optional[str]) -> QColor:
+    if preset == "custom" and text_color:
+        return QColor(text_color)
+    if preset == "dark":
+        return QColor("#F5F5F5")
+    return QColor("#1C1C1C")
+
+
+def _fill_seed(preset: str, fill_color: Optional[str], fill_alpha: Optional[int]) -> QColor:
+    if preset == "custom" and fill_color:
+        color = QColor(fill_color)
+        if fill_alpha is not None:
+            color.setAlpha(fill_alpha)
+        return color
+    if preset == "dark":
+        color = QColor("#141414")
+        color.setAlpha(180)
+        return color
+    color = QColor("#FFFFFF")
+    color.setAlpha(88)
+    return color
+
+
+def _preset_alpha(preset: str) -> int:
+    if preset == "dark":
+        return 180
+    return 88
 
 
 def make_tray_icon() -> QIcon:

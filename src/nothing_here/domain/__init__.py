@@ -4,7 +4,9 @@ from .daily import (
     ensure_day,
     grade,
     resolve_current,
+    restore,
     set_goal,
+    slay,
     switch_catalog,
 )
 from .sample import WeightedWord, pick_one
@@ -21,7 +23,9 @@ __all__ = [
     "grade",
     "pick_one",
     "resolve_current",
+    "restore",
     "set_goal",
+    "slay",
     "switch_catalog",
     "weight",
 ]

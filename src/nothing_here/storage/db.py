@@ -25,6 +25,13 @@ class AppState:
     origin: Optional[tuple[int, int]] = None
     floating: bool = False
     daily_goal: int = 10
+    style_preset: str = "light"
+    text_color: Optional[str] = None
+    fill_color: Optional[str] = None
+    fill_alpha: Optional[int] = None
+    surface_id: str = "word"
+    # 自定义时按钮底色仍跟最近一次浅色或黑底走。没选过黑底则为 light。
+    button_preset: str = "light"
 
 
 @dataclass(frozen=True)
@@ -69,7 +76,18 @@ class Store:
                 x3 INTEGER,
                 y3 INTEGER,
                 floating INTEGER NOT NULL DEFAULT 0,
-                daily_goal INTEGER NOT NULL DEFAULT 10
+                daily_goal INTEGER NOT NULL DEFAULT 10,
+                style_preset TEXT NOT NULL DEFAULT 'light',
+                text_color TEXT,
+                fill_color TEXT,
+                fill_alpha INTEGER,
+                surface_id TEXT NOT NULL DEFAULT 'word',
+                button_preset TEXT NOT NULL DEFAULT 'light'
+            );
+
+            CREATE TABLE IF NOT EXISTS slain (
+                word TEXT PRIMARY KEY,
+                slain_at INTEGER NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS daily_state (
@@ -96,6 +114,24 @@ class Store:
         if "daily_goal" not in existing:
             self._conn.execute(
                 "ALTER TABLE app_state ADD COLUMN daily_goal INTEGER NOT NULL DEFAULT 10"
+            )
+        if "style_preset" not in existing:
+            self._conn.execute(
+                "ALTER TABLE app_state ADD COLUMN style_preset TEXT NOT NULL DEFAULT 'light'"
+            )
+        if "text_color" not in existing:
+            self._conn.execute("ALTER TABLE app_state ADD COLUMN text_color TEXT")
+        if "fill_color" not in existing:
+            self._conn.execute("ALTER TABLE app_state ADD COLUMN fill_color TEXT")
+        if "fill_alpha" not in existing:
+            self._conn.execute("ALTER TABLE app_state ADD COLUMN fill_alpha INTEGER")
+        if "surface_id" not in existing:
+            self._conn.execute(
+                "ALTER TABLE app_state ADD COLUMN surface_id TEXT NOT NULL DEFAULT 'word'"
+            )
+        if "button_preset" not in existing:
+            self._conn.execute(
+                "ALTER TABLE app_state ADD COLUMN button_preset TEXT NOT NULL DEFAULT 'light'"
             )
 
     def get_progress(self, word: str) -> tuple[int, int]:
@@ -130,11 +166,39 @@ class Store:
         self._conn.commit()
         return correct, reviews
 
+    def slay_word(self, word: str) -> None:
+        key = word.casefold()
+        nxt = self._conn.execute("SELECT COALESCE(MAX(slain_at), 0) + 1 FROM slain").fetchone()
+        slain_at = int(nxt[0]) if nxt else 1
+        self._conn.execute(
+            """
+            INSERT INTO slain(word, slain_at) VALUES (?, ?)
+            ON CONFLICT(word) DO UPDATE SET slain_at = excluded.slain_at
+            """,
+            (key, slain_at),
+        )
+        self._conn.commit()
+
+    def restore_word(self, word: str) -> None:
+        self._conn.execute("DELETE FROM slain WHERE word = ?", (word.casefold(),))
+        self._conn.commit()
+
+    def list_slain(self) -> tuple[tuple[str, int], ...]:
+        rows = self._conn.execute(
+            "SELECT word, slain_at FROM slain ORDER BY slain_at DESC"
+        ).fetchall()
+        return tuple((str(word), int(slain_at)) for word, slain_at in rows)
+
+    def slain_words(self) -> tuple[str, ...]:
+        return tuple(word for word, _slain_at in self.list_slain())
+
     def load_state(self) -> AppState:
         row = self._conn.execute(
             """
             SELECT hidden, active_source, slot1, slot2, slot3,
-                   x1, y1, x2, y2, x3, y3, floating, daily_goal
+                   x1, y1, x2, y2, x3, y3, floating, daily_goal,
+                   style_preset, text_color, fill_color, fill_alpha,
+                   surface_id, button_preset
             FROM app_state WHERE id = 1
             """
         ).fetchone()
@@ -154,6 +218,12 @@ class Store:
             y3,
             floating,
             daily_goal,
+            style_preset,
+            text_color,
+            fill_color,
+            fill_alpha,
+            surface_id,
+            button_preset,
         ) = row
         word, origin = _migrate_current(
             slot1,
@@ -163,6 +233,14 @@ class Store:
             _origin(x2, y2),
             _origin(x3, y3),
         )
+        preset, text, fill, alpha, surface, buttons = _style_fields(
+            style_preset,
+            text_color,
+            fill_color,
+            fill_alpha,
+            surface_id,
+            button_preset,
+        )
         return AppState(
             hidden=bool(hidden),
             active_source=str(active_source),
@@ -170,6 +248,12 @@ class Store:
             origin=origin,
             floating=bool(floating),
             daily_goal=int(daily_goal),
+            style_preset=preset,
+            text_color=text,
+            fill_color=fill,
+            fill_alpha=alpha,
+            surface_id=surface,
+            button_preset=buttons,
         )
 
     def save_state(self, state: AppState) -> None:
@@ -178,9 +262,14 @@ class Store:
             """
             INSERT INTO app_state(
                 id, hidden, active_source, slot1, slot2, slot3,
-                x1, y1, x2, y2, x3, y3, floating, daily_goal
+                x1, y1, x2, y2, x3, y3, floating, daily_goal,
+                style_preset, text_color, fill_color, fill_alpha,
+                surface_id, button_preset
             )
-            VALUES (1, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL, NULL, NULL, ?, ?)
+            VALUES (
+                1, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL, NULL, NULL, ?, ?,
+                ?, ?, ?, ?, ?, ?
+            )
             ON CONFLICT(id) DO UPDATE SET
                 hidden = excluded.hidden,
                 active_source = excluded.active_source,
@@ -194,7 +283,13 @@ class Store:
                 x3 = NULL,
                 y3 = NULL,
                 floating = excluded.floating,
-                daily_goal = excluded.daily_goal
+                daily_goal = excluded.daily_goal,
+                style_preset = excluded.style_preset,
+                text_color = excluded.text_color,
+                fill_color = excluded.fill_color,
+                fill_alpha = excluded.fill_alpha,
+                surface_id = excluded.surface_id,
+                button_preset = excluded.button_preset
             """,
             (
                 1 if state.hidden else 0,
@@ -204,6 +299,7 @@ class Store:
                 y,
                 1 if state.floating else 0,
                 state.daily_goal,
+                *_stored_style(state),
             ),
         )
         self._conn.commit()
@@ -274,6 +370,58 @@ def _pair(origin: Optional[tuple[int, int]]) -> tuple[Optional[int], Optional[in
     if origin is None:
         return (None, None)
     return (origin[0], origin[1])
+
+
+def _stored_style(
+    state: AppState,
+) -> tuple[str, Optional[str], Optional[str], Optional[int], str, str]:
+    preset = state.style_preset if state.style_preset in ("light", "dark", "custom") else "light"
+    if preset in ("light", "dark"):
+        return preset, None, None, None, "word", preset
+    text = _hex_or_none(state.text_color)
+    fill = _hex_or_none(state.fill_color)
+    alpha = state.fill_alpha
+    button = state.button_preset if state.button_preset in ("light", "dark") else "light"
+    if text is None or fill is None or alpha is None:
+        return "light", None, None, None, "word", "light"
+    return "custom", text, fill, max(20, min(230, int(alpha))), "word", button
+
+
+def _style_fields(
+    style_preset: object,
+    text_color: object,
+    fill_color: object,
+    fill_alpha: object,
+    surface_id: object,
+    button_preset: object,
+) -> tuple[str, Optional[str], Optional[str], Optional[int], str, str]:
+    del surface_id
+    return _stored_style(
+        AppState(
+            hidden=False,
+            active_source="",
+            word=None,
+            style_preset=str(style_preset or "light"),
+            text_color=_hex_or_none(text_color),
+            fill_color=_hex_or_none(fill_color),
+            fill_alpha=None if fill_alpha is None else int(fill_alpha),
+            surface_id="word",
+            button_preset=str(button_preset or "light"),
+        )
+    )
+
+
+def _hex_or_none(value: object) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if len(text) != 7 or not text.startswith("#"):
+        return None
+    try:
+        int(text[1:], 16)
+    except ValueError:
+        return None
+    return text.upper()
 
 
 def _words(value: object) -> tuple[str, ...]:

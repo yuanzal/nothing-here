@@ -6,6 +6,8 @@ import json
 import sys
 from pathlib import Path
 
+from example_sentences import sentence_for
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = REPO_ROOT / "data" / "ielts.json"
 
@@ -24,11 +26,13 @@ def convert(csv_path: Path) -> list[dict[str, str]]:
             word = (rec.get("word") or "").strip()
             if not word:
                 continue
+            translation = rec.get("translation") or ""
             rows.append(
                 {
                     "word": word,
                     "phonetic": rec.get("phonetic") or "",
-                    "translation": rec.get("translation") or "",
+                    "translation": translation,
+                    "example": sentence_for(word, translation),
                 }
             )
     return rows

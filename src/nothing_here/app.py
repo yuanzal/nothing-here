@@ -11,12 +11,23 @@ from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import QApplication
 
 from nothing_here.desktop.host import DesktopHost
-from nothing_here.domain.daily import DailyPlan, ensure_day, grade, resolve_current, set_goal, switch_catalog
+from nothing_here.domain.daily import (
+    DailyPlan,
+    ensure_day,
+    grade,
+    resolve_current,
+    restore,
+    set_goal,
+    slay,
+    switch_catalog,
+)
 from nothing_here.input.hotkey import HotkeyListener
 from nothing_here.storage.db import AppState, DailyRecord, Store
 from nothing_here.ui.card_window import CardWindow, Face
+from nothing_here.ui.style import palette_for
 from nothing_here.ui.tray import Tray
-from nothing_here.vocab.protocol import VocabSource
+from nothing_here.vocab.examples import EntryExampleSource, load_example_sources, resolve_example
+from nothing_here.vocab.protocol import Entry, VocabSource
 from nothing_here.vocab.registry import catalog_from, load_sources
 
 INSTANCE_NAME = "nothing-here"
@@ -37,18 +48,41 @@ class App(QObject):
         self._store = Store()
         self._sources = load_sources()
         self._source_by_id = {source.source_id: source for source in self._sources}
+        self._catalogs: dict[str, dict[str, Entry]] = {}
+        self._spellings: dict[str, str] = {}
+        for source in self._sources:
+            catalog = catalog_from(source)
+            self._catalogs[source.source_id] = catalog
+            for key, entry in catalog.items():
+                self._spellings.setdefault(key, entry.word)
         persisted = self._store.load_state()
         self._active_id = _pick_source(self._sources, persisted.active_source)
-        self._catalog = catalog_from(self._source_by_id[self._active_id])
+        self._catalog = self._catalogs[self._active_id]
+        self._example_sources = load_example_sources()
+        self._bind_examples()
         self._progress = self._store.all_progress()
+        self._slain = set(self._store.slain_words())
         self._plan = _plan_from_store(self._store, persisted, _today())
-        self._plan = resolve_current(self._plan, list(self._catalog), self._progress)
+        self._plan = resolve_current(
+            self._plan,
+            list(self._catalog),
+            self._progress,
+            slain=self._slain_seq(),
+        )
         self._origin = persisted.origin
         self._floating = persisted.floating
         self._hidden = persisted.hidden
+        self._style_preset = persisted.style_preset
+        self._text_color = persisted.text_color
+        self._fill_color = persisted.fill_color
+        self._fill_alpha = persisted.fill_alpha
+        self._button_preset = persisted.button_preset
+        self._surface_id = "word"
         self._view = ViewState.HIDDEN
         self._face = Face.FRONT
         self._card: Optional[CardWindow] = None
+        self._pending_plan: Optional[DailyPlan] = None
+        self._burning = False
         self._host = DesktopHost()
         self._host.floating = self._floating
         self._embed_notified = False
@@ -58,6 +92,11 @@ class App(QObject):
             self._floating,
             self._plan.count,
             self._plan.goal,
+            self._slain_items(),
+            self._style_preset,
+            self._text_color,
+            self._fill_color,
+            self._fill_alpha,
         )
         self._tray.show_cards.connect(self.show_cards)
         self._tray.hide_cards.connect(self.hide_cards)
@@ -65,6 +104,10 @@ class App(QObject):
         self._tray.source_chosen.connect(self.switch_source)
         self._tray.layer_chosen.connect(self.set_floating)
         self._tray.quit_requested.connect(self.quit)
+        self._tray.restore_chosen.connect(self.restore_word)
+        self._tray.style_preset_chosen.connect(self.choose_style_preset)
+        self._tray.style_custom_chosen.connect(self.choose_custom_style)
+        self._tray.surface_chosen.connect(self.choose_surface)
         self.visibility_hotkey_pressed.connect(self.toggle_visibility)
         self._hotkey = HotkeyListener(self.visibility_hotkey_pressed.emit)
         self._hotkey.start()
@@ -82,7 +125,12 @@ class App(QObject):
             return
         self._check_day()
         self._hidden = False
-        self._plan = resolve_current(self._plan, list(self._catalog), self._progress)
+        self._plan = resolve_current(
+            self._plan,
+            list(self._catalog),
+            self._progress,
+            slain=self._slain_seq(),
+        )
         self._face = Face.FRONT
         if not self._floating and not self._host.available:
             self._notify_embed_failed()
@@ -98,6 +146,7 @@ class App(QObject):
     def hide_cards(self) -> None:
         if self._view is ViewState.HIDDEN:
             return
+        self._take_pending_slay()
         self._destroy_windows()
         self._view = ViewState.HIDDEN
         self._hidden = True
@@ -105,9 +154,17 @@ class App(QObject):
         self._persist()
 
     def change_goal(self, goal: int) -> None:
+        if self._burning:
+            return
         self._check_day()
         previous = self._plan
-        self._plan = set_goal(self._plan, goal, list(self._catalog), self._progress)
+        self._plan = set_goal(
+            self._plan,
+            goal,
+            list(self._catalog),
+            self._progress,
+            slain=self._slain_seq(),
+        )
         if self._plan == previous:
             return
         word_changed = self._plan.current != previous.current
@@ -116,9 +173,7 @@ class App(QObject):
             self._face = Face.FRONT
         self._sync_daily_tray()
         if self._view is ViewState.VISIBLE:
-            if self._plan.current is None:
-                self._destroy_windows()
-            elif word_changed or just_sealed or self._card is None:
+            if word_changed or just_sealed or self._card is None:
                 if not self._open_card(self._face):
                     self._notify_embed_failed()
                     self._view = ViewState.HIDDEN
@@ -130,6 +185,9 @@ class App(QObject):
         QTimer.singleShot(0, lambda: self.set_floating(not self._floating))
 
     def set_floating(self, floating: bool) -> None:
+        if self._burning:
+            self._sync_layer_controls()
+            return
         if floating == self._floating:
             self._sync_layer_controls()
             return
@@ -156,32 +214,98 @@ class App(QObject):
         self.hide_cards()
 
     def switch_source(self, source_id: str) -> None:
-        if source_id not in self._source_by_id:
+        if self._burning or source_id not in self._source_by_id:
             return
         self._check_day()
         visible = self._view is ViewState.VISIBLE
         self._active_id = source_id
-        self._catalog = catalog_from(self._source_by_id[source_id])
-        self._plan = switch_catalog(self._plan, list(self._catalog), self._progress)
+        self._catalog = self._catalogs[source_id]
+        self._bind_examples()
+        self._plan = switch_catalog(
+            self._plan,
+            list(self._catalog),
+            self._progress,
+            slain=self._slain_seq(),
+        )
         self._face = Face.FRONT
         self._tray.set_active_source(source_id)
         if visible:
-            self._destroy_windows()
-            self._view = ViewState.HIDDEN
             needs_desktop = not self._floating and not self._host.available
-            if self._plan.current is None:
-                self._view = ViewState.VISIBLE
-            elif needs_desktop or not self._open_card(Face.FRONT):
+            if needs_desktop or not self._open_card(Face.FRONT):
+                self._destroy_windows()
+                self._view = ViewState.HIDDEN
                 self._notify_embed_failed()
             else:
                 self._view = ViewState.VISIBLE
         self._persist()
 
+    def restore_word(self, word: str) -> None:
+        if self._burning:
+            return
+        key = word.casefold()
+        if key not in self._slain:
+            return
+        was_finished = self._plan.current is None
+        self._store.restore_word(key)
+        self._slain.discard(key)
+        self._plan = restore(
+            self._plan,
+            key,
+            list(self._catalog),
+            self._progress,
+            self._slain_seq(),
+        )
+        self._tray.set_slain_items(self._slain_items())
+        if was_finished and self._plan.current is not None and self._view is ViewState.VISIBLE:
+            self._face = Face.FRONT
+            opened = True
+            if self._card is None:
+                opened = self._open_card(Face.FRONT)
+            else:
+                self._render()
+            if not opened:
+                self._notify_embed_failed()
+                self._view = ViewState.HIDDEN
+        self._persist()
+
+    def choose_style_preset(self, preset: str) -> None:
+        if preset not in ("light", "dark"):
+            self._sync_style_tray()
+            return
+        if self._style_preset == preset:
+            self._sync_style_tray()
+            return
+        self._style_preset = preset
+        self._button_preset = preset
+        self._text_color = None
+        self._fill_color = None
+        self._fill_alpha = None
+        self._sync_style_tray()
+        self._apply_style()
+        self._persist()
+
+    def choose_custom_style(self, text: str, fill: str, alpha: int) -> None:
+        self._style_preset = "custom"
+        self._text_color = text.upper()
+        self._fill_color = fill.upper()
+        self._fill_alpha = max(20, min(230, int(alpha)))
+        self._sync_style_tray()
+        self._apply_style()
+        self._persist()
+
+    def choose_surface(self, surface_id: str) -> None:
+        del surface_id
+        self._surface_id = "word"
+        self._tray.set_surface("word")
+
     def quit(self) -> None:
+        self._take_pending_slay()
         self._persist()
         self._qt_app.quit()
 
     def _grade(self, known: bool) -> None:
+        if self._burning:
+            return
         self._check_day()
         if self._view is not ViewState.VISIBLE or self._face is not Face.BACK:
             return
@@ -189,12 +313,16 @@ class App(QObject):
             return
         correct, reviews = self._store.record(self._plan.current, known)
         self._progress[self._plan.current] = (correct, reviews)
-        self._plan = grade(self._plan, known, list(self._catalog), self._progress)
+        self._plan = grade(
+            self._plan,
+            known,
+            list(self._catalog),
+            self._progress,
+            slain=self._slain_seq(),
+        )
         self._face = Face.FRONT
         self._sync_daily_tray()
-        if self._plan.current is None:
-            self._destroy_windows()
-        elif self._card is None:
+        if self._card is None:
             if not self._open_card(Face.FRONT):
                 self._notify_embed_failed()
                 self._view = ViewState.HIDDEN
@@ -202,8 +330,42 @@ class App(QObject):
             self._render()
         self._persist()
 
+    def _slay(self) -> None:
+        if self._burning or self._view is not ViewState.VISIBLE or self._face is not Face.BACK:
+            return
+        if self._card is None or self._plan.current is None:
+            return
+        if self._plan.current not in self._catalog:
+            return
+        word = self._plan.current
+        self._store.slay_word(word)
+        self._slain.add(word.casefold())
+        self._pending_plan = slay(
+            self._plan,
+            list(self._catalog),
+            self._progress,
+            self._slain_seq(),
+        )
+        self._burning = True
+        self._tray.set_slain_items(self._slain_items())
+        self._card.play_burn()
+
+    def _on_burn_finished(self) -> None:
+        pending = self._pending_plan
+        self._pending_plan = None
+        self._burning = False
+        if pending is not None:
+            self._plan = pending
+        self._face = Face.FRONT
+        if self._view is ViewState.VISIBLE and self._card is not None:
+            self._render()
+            self._card.finish_burn()
+        self._persist()
+
     def _toggle_face(self) -> None:
-        if self._view is ViewState.HIDDEN or self._card is None:
+        if self._burning or self._view is ViewState.HIDDEN or self._card is None:
+            return
+        if self._plan.current is None or self._plan.current not in self._catalog:
             return
         self._face = Face.BACK if self._face is Face.FRONT else Face.FRONT
         self._render()
@@ -211,16 +373,17 @@ class App(QObject):
     def _open_card(self, face: Face) -> bool:
         self._destroy_windows()
         self._face = face
-        if not self._plan.current or self._plan.current not in self._catalog:
-            return True
         card = CardWindow()
         card.recognized.connect(lambda: self._grade(True))
         card.unknown.connect(lambda: self._grade(False))
         card.reveal_toggled.connect(self._toggle_face)
+        card.slay_requested.connect(self._slay)
+        card.burn_finished.connect(self._on_burn_finished)
         card.moved.connect(lambda x, y: self._move_card(x, y, persist=False))
         card.move_finished.connect(lambda x, y: self._move_card(x, y, persist=True))
         card.layer_requested.connect(self._request_layer_toggle)
         card.set_layer_floating(self._floating)
+        card.apply_palette(self._palette())
         card.apply_layer(self._floating)
         card.winId()
         if not self._host.prepare(card, self._floating):
@@ -233,25 +396,35 @@ class App(QObject):
         return True
 
     def _render(self) -> None:
-        if self._card is None or not self._plan.current or self._plan.current not in self._catalog:
+        if self._card is None:
             return
-        entry = self._catalog[self._plan.current]
-        correct, reviews = self._progress.get(self._plan.current, (0, 0))
-        self._card.set_content(
-            entry.word,
-            entry.phonetic,
-            entry.translation,
-            correct,
-            reviews,
-            self._face,
-        )
+        self._card.apply_palette(self._palette())
+        self._card.set_layer_floating(self._floating)
+        word = self._plan.current
+        if not word or word not in self._catalog:
+            self._card.show_finished()
+        else:
+            entry = self._catalog[word]
+            correct, reviews = self._progress.get(word, (0, 0))
+            example = ""
+            if self._face is Face.BACK:
+                example = resolve_example(self._example_sources, entry.word)
+            self._card.set_content(
+                entry.word,
+                entry.phonetic,
+                entry.translation,
+                correct,
+                reviews,
+                self._face,
+                example,
+            )
         self._host.set_click_through(self._card, False)
         placed = self._host.place([self._card], MIN_FRONT_HEIGHT, [self._origin])
         if self._origin is not None and placed:
             self._origin = placed[0]
 
     def _move_card(self, x: int, y: int, persist: bool) -> None:
-        if self._card is None:
+        if self._card is None or self._burning:
             return
         self._origin = self._host.move(self._card, x, y)
         if persist:
@@ -266,6 +439,12 @@ class App(QObject):
                 origin=self._origin,
                 floating=self._floating,
                 daily_goal=self._plan.goal,
+                style_preset=self._style_preset,
+                text_color=self._text_color,
+                fill_color=self._fill_color,
+                fill_alpha=self._fill_alpha,
+                surface_id=self._surface_id,
+                button_preset=self._button_preset,
             )
         )
         self._store.save_daily(
@@ -280,10 +459,20 @@ class App(QObject):
     def _destroy_windows(self) -> None:
         if self._card is None:
             return
+        self._card.cancel_burn()
         self._card.hide()
         self._card.close()
         self._card.deleteLater()
         self._card = None
+
+    def _take_pending_slay(self) -> None:
+        if self._card is not None:
+            self._card.cancel_burn()
+        if self._pending_plan is not None:
+            self._plan = self._pending_plan
+            self._pending_plan = None
+            self._face = Face.FRONT
+        self._burning = False
 
     def _sync_layer_controls(self) -> None:
         self._tray.set_floating(self._floating)
@@ -293,7 +482,30 @@ class App(QObject):
     def _sync_daily_tray(self) -> None:
         self._tray.set_daily_progress(self._plan.count, self._plan.goal)
 
+    def _sync_style_tray(self) -> None:
+        self._tray.set_style_state(
+            self._style_preset,
+            self._text_color,
+            self._fill_color,
+            self._fill_alpha,
+        )
+
+    def _apply_style(self) -> None:
+        if self._card is not None:
+            self._card.apply_palette(self._palette())
+
+    def _palette(self):
+        return palette_for(
+            self._style_preset,
+            self._text_color,
+            self._fill_color,
+            self._fill_alpha,
+            self._button_preset,
+        )
+
     def _check_day(self) -> None:
+        if self._burning:
+            return
         updated = ensure_day(self._plan, _today())
         if updated is self._plan:
             return
@@ -307,11 +519,23 @@ class App(QObject):
             self._embed_notified = True
 
     def _teardown(self) -> None:
+        self._take_pending_slay()
         self._persist()
         self._hotkey.stop()
         self._day_timer.stop()
         self._destroy_windows()
         self._store.close()
+
+    def _bind_examples(self) -> None:
+        source = self._example_sources[0]
+        if isinstance(source, EntryExampleSource):
+            source.use_examples({key: entry.example for key, entry in self._catalog.items()})
+
+    def _slain_seq(self) -> tuple[str, ...]:
+        return tuple(self._slain)
+
+    def _slain_items(self) -> list[tuple[str, str]]:
+        return [(word, self._spellings.get(word, word)) for word in self._store.slain_words()]
 
 
 def _plan_from_store(store: Store, persisted: AppState, today: str) -> DailyPlan:

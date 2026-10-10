@@ -135,3 +135,79 @@ class OriginStoreTests(unittest.TestCase):
             self.assertEqual(record.collected, ("apple", "book"))
             self.assertEqual(record.queue, ("book", "apple"))
             self.assertEqual(record.phase, 1)
+
+    def test_upgrades_style_columns_and_surface_without_losing_the_word(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "study.db"
+            conn = sqlite3.connect(path)
+            conn.execute(
+                """
+                CREATE TABLE app_state (
+                    id INTEGER PRIMARY KEY CHECK (id = 1),
+                    hidden INTEGER NOT NULL,
+                    active_source TEXT NOT NULL,
+                    slot1 TEXT,
+                    slot2 TEXT,
+                    slot3 TEXT,
+                    x1 INTEGER,
+                    y1 INTEGER,
+                    x2 INTEGER,
+                    y2 INTEGER,
+                    x3 INTEGER,
+                    y3 INTEGER,
+                    floating INTEGER NOT NULL DEFAULT 0,
+                    daily_goal INTEGER NOT NULL DEFAULT 10
+                )
+                """
+            )
+            conn.execute(
+                """
+                INSERT INTO app_state(
+                    id, hidden, active_source, slot1, daily_goal
+                ) VALUES (1, 0, 'ielts', 'kept', 6)
+                """
+            )
+            conn.commit()
+            conn.close()
+
+            store = Store(path)
+            state = store.load_state()
+            store.close()
+            self.assertEqual(state.word, "kept")
+            self.assertEqual(state.daily_goal, 6)
+            self.assertEqual(state.style_preset, "light")
+            self.assertIsNone(state.text_color)
+            self.assertIsNone(state.fill_color)
+            self.assertIsNone(state.fill_alpha)
+            self.assertEqual(state.surface_id, "word")
+
+    def test_style_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "study.db"
+            store = Store(path)
+            store.save_state(
+                AppState(
+                    hidden=True,
+                    active_source="ielts",
+                    word="kept",
+                    daily_goal=6,
+                    style_preset="custom",
+                    text_color="#112233",
+                    fill_color="#445566",
+                    fill_alpha=120,
+                    surface_id="word",
+                    button_preset="dark",
+                )
+            )
+            store.close()
+            again = Store(path)
+            state = again.load_state()
+            again.close()
+            self.assertEqual(state.word, "kept")
+            self.assertEqual(state.daily_goal, 6)
+            self.assertEqual(state.style_preset, "custom")
+            self.assertEqual(state.text_color, "#112233")
+            self.assertEqual(state.fill_color, "#445566")
+            self.assertEqual(state.fill_alpha, 120)
+            self.assertEqual(state.surface_id, "word")
+            self.assertEqual(state.button_preset, "dark")

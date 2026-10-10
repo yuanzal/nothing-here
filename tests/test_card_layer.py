@@ -73,6 +73,61 @@ class CardLayerTests(unittest.TestCase):
         self.assertEqual(card._layer.text(), "浮在窗口上")
         card.close()
 
+    def test_back_shows_example_and_rose_without_a_blank_line(self) -> None:
+        card = CardWindow()
+        card.resize(300, 280)
+        card.show()
+        card.set_content("word", "wɜːd", "词", 1, 2, Face.FRONT, "A short example.")
+        self.assertFalse(card._example.isVisible())
+        self.assertFalse(card._button_row.isVisible())
+        card.set_content("word", "wɜːd", "词", 1, 2, Face.BACK, "A short example.")
+        self.assertTrue(card._example.isVisible())
+        self.assertEqual(card._example.text(), "A short example.")
+        self.assertTrue(card._rose.isVisible())
+        self.assertEqual(card._rose.text(), "")
+        self.assertEqual(card._rose.toolTip(), "斩杀")
+        card.set_content("word", "", "词", 1, 2, Face.BACK, "   ")
+        self.assertFalse(card._example.isVisible())
+        self.assertFalse(card._phonetic.isVisible())
+        card.close()
+
+    def test_finished_card_shows_only_the_fixed_line(self) -> None:
+        card = CardWindow()
+        card.resize(300, 180)
+        card.show()
+        card.show_finished()
+        self.assertTrue(card._done.isVisible())
+        self.assertEqual(card._done.text(), "厉害啦，没有更多单词了")
+        self.assertFalse(card._word.isVisible())
+        self.assertFalse(card._stats.isVisible())
+        self.assertFalse(card._reveal.isVisible())
+        self.assertFalse(card._translation.isVisible())
+        self.assertFalse(card._example.isVisible())
+        self.assertFalse(card._button_row.isVisible())
+        self.assertTrue(card._layer.isVisible())
+        card.close()
+
+    def test_burn_fades_and_blocks_buttons(self) -> None:
+        card = CardWindow()
+        card.resize(300, 220)
+        card.show()
+        card.set_content("word", "", "词", 0, 0, Face.BACK, "")
+        seen: list[float] = []
+        card.burn_finished.connect(lambda: seen.append(card._fade))
+        card.play_burn()
+        self.assertFalse(card._known.isEnabled())
+        self.assertFalse(card._rose.isEnabled())
+        for _ in range(40):
+            QTest.qWait(20)
+            if seen:
+                break
+        self.assertEqual(seen, [0.0])
+        card.finish_burn()
+        self.assertEqual(card._fade, 1.0)
+        self.assertEqual(card._sink, 0)
+        self.assertTrue(card._known.isEnabled())
+        card.close()
+
 
 if __name__ == "__main__":
     unittest.main()

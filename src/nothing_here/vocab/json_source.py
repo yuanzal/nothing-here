@@ -31,6 +31,7 @@ class JsonVocabSource:
                     word=word,
                     phonetic=str(item.get("phonetic") or ""),
                     translation=str(item.get("translation") or "").replace("\\n", "\n"),
+                    example=str(item.get("example") or "").strip(),
                 )
             )
         return entries

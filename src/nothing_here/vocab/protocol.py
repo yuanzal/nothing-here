@@ -9,6 +9,7 @@ class Entry:
     word: str
     phonetic: str
     translation: str
+    example: str = ""
 
 
 class VocabSource(Protocol):
