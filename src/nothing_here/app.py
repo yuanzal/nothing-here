@@ -126,6 +126,9 @@ class App(QObject):
                 self._render()
         self._persist()
 
+    def _request_layer_toggle(self) -> None:
+        QTimer.singleShot(0, lambda: self.set_floating(not self._floating))
+
     def set_floating(self, floating: bool) -> None:
         if floating == self._floating:
             self._sync_layer_controls()
@@ -216,7 +219,7 @@ class App(QObject):
         card.reveal_toggled.connect(self._toggle_face)
         card.moved.connect(lambda x, y: self._move_card(x, y, persist=False))
         card.move_finished.connect(lambda x, y: self._move_card(x, y, persist=True))
-        card.layer_requested.connect(lambda: self.set_floating(not self._floating))
+        card.layer_requested.connect(self._request_layer_toggle)
         card.set_layer_floating(self._floating)
         card.apply_layer(self._floating)
         card.winId()

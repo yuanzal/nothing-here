@@ -4,7 +4,7 @@ import ctypes
 from ctypes import wintypes
 from typing import Optional, Sequence
 
-from PyQt6.QtCore import QRect
+from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from nothing_here.ui.card_window import CARD_GAP, CARD_WIDTH, MARGIN_RIGHT, MARGIN_TOP
@@ -120,15 +120,16 @@ class DesktopHost:
             self.floating = False
             self._user32.SetParent(hwnd, wintypes.HWND(self._desktop))
             self._stack(hwnd, HWND_TOP)
+        widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        widget.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.set_click_through(widget, False)
+        widget.update()
         return True
 
     def set_click_through(self, widget: QWidget, enabled: bool) -> None:
         # The card itself must keep receiving the mouse, otherwise it cannot be dragged.
         # Clicks outside the card still hit the desktop, because the window is only card-sized.
         del enabled
-        from PyQt6.QtCore import Qt
-
         widget.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, False)
         hwnd = wintypes.HWND(int(widget.winId()))
         ex = self._user32.GetWindowLongPtrW(hwnd, GWL_EXSTYLE)

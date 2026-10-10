@@ -2,9 +2,10 @@ from __future__ import annotations
 
 from enum import Enum
 
-from PyQt6.QtCore import QPoint, Qt, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QPainter, QPainterPath
+from PyQt6.QtCore import QPoint, QPointF, Qt, pyqtSignal
+from PyQt6.QtGui import QColor, QFont, QMouseEvent, QPainter, QPainterPath
 from PyQt6.QtWidgets import (
+    QApplication,
     QHBoxLayout,
     QLabel,
     QPushButton,
@@ -52,6 +53,8 @@ class _Body(QWidget):
         self.setCursor(Qt.CursorShape.OpenHandCursor)
 
     def mousePressEvent(self, event) -> None:  # noqa: N802
+        if self._forward_button(event):
+            return
         if event.button() == Qt.MouseButton.LeftButton:
             self._owner.begin_drag(event.globalPosition().toPoint())
             event.accept()
@@ -59,6 +62,8 @@ class _Body(QWidget):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._owner._press_global is None and self._forward_button(event):
+            return
         if event.buttons() & Qt.MouseButton.LeftButton:
             self._owner.drag_to(event.globalPosition().toPoint())
             event.accept()
@@ -66,11 +71,30 @@ class _Body(QWidget):
         super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if self._owner._press_global is None and self._forward_button(event):
+            return
         if event.button() == Qt.MouseButton.LeftButton:
             self._owner.end_drag(event.globalPosition().toPoint())
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
+    def _forward_button(self, event: QMouseEvent) -> bool:
+        button = _button_at(self, event.position().toPoint())
+        if button is None:
+            return False
+        local = QPointF(button.mapFrom(self, event.position().toPoint()))
+        forwarded = QMouseEvent(
+            event.type(),
+            local,
+            event.globalPosition(),
+            event.button(),
+            event.buttons(),
+            event.modifiers(),
+        )
+        QApplication.sendEvent(button, forwarded)
+        event.accept()
+        return True
 
     def wheelEvent(self, event) -> None:  # noqa: N802
         pixels = event.pixelDelta().y()
@@ -145,7 +169,7 @@ class CardWindow(QWidget):
         self._layer = QPushButton("浮在窗口上")
         self._layer.setCursor(Qt.CursorShape.PointingHandCursor)
         self._layer.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self._layer.setStyleSheet(_layer_style())
+        self._layer.setStyleSheet(_button_style(KNOWN_BG))
         self._layer.clicked.connect(self.layer_requested.emit)
 
         buttons = QHBoxLayout()
@@ -179,6 +203,7 @@ class CardWindow(QWidget):
             flags |= Qt.WindowType.WindowStaysOnTopHint
         self.setWindowFlags(flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
         self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -289,22 +314,13 @@ def _px_font(family: str, px: int, bold: bool = False) -> QFont:
     return font
 
 
-def _layer_style() -> str:
-    return """
-        QPushButton {
-            background: transparent;
-            color: #3A3A3A;
-            border: none;
-            border-radius: 6px;
-            padding: 2px 0 0 0;
-            font-family: 'Microsoft YaHei';
-            font-size: 12px;
-            text-align: left;
-        }
-        QPushButton:hover {
-            color: #1C1C1C;
-        }
-    """
+def _button_at(origin: QWidget, pos: QPoint) -> QPushButton | None:
+    widget = origin.childAt(pos)
+    while widget is not None and widget is not origin:
+        if isinstance(widget, QPushButton):
+            return widget
+        widget = widget.parentWidget()
+    return None
 
 
 def _button_style(background: str) -> str:
