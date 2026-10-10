@@ -4,7 +4,7 @@ from enum import Enum
 from pathlib import Path
 
 from PyQt6.QtCore import QElapsedTimer, QPoint, QPointF, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QIcon, QImage, QMouseEvent, QPainter, QPainterPath, QPixmap
+from PyQt6.QtGui import QColor, QFont, QIcon, QImage, QMouseEvent, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
     QApplication,
@@ -24,7 +24,6 @@ MARGIN_RIGHT = 24
 MARGIN_TOP = 24
 CARD_GAP = 12
 PADDING = 16
-RADIUS = 12
 FINISHED_TEXT = "厉害啦，没有更多单词了"
 BURN_MS = 400
 SINK_PX = 12
@@ -43,7 +42,7 @@ def stats_text(correct: int, reviews: int) -> str:
 
 
 class _Body(QWidget):
-    """Content layer. Stays non-native so it does not punch a hole in the card fill."""
+    """Content layer. Stays non-native so it does not punch a hole in the transparent card."""
 
     def __init__(self, owner: "CardWindow") -> None:
         super().__init__(owner)
@@ -369,11 +368,10 @@ class CardWindow(QWidget):
         del event
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 0))
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
         painter.translate(0, self._sink)
-        path = QPainterPath()
-        path.addRoundedRect(0.5, 0.5, self.width() - 1, self.height() - 1, RADIUS, RADIUS)
-        red, green, blue, alpha = self._palette.fill
-        painter.fillPath(path, QColor(red, green, blue, _scaled(alpha, self._fade)))
         content = self._body.height()
         overflow = content - self.height()
         if overflow <= 0:

@@ -17,7 +17,7 @@ class CardPalette:
 
 
 LIGHT = CardPalette(
-    fill=(255, 255, 255, 88),
+    fill=(0, 0, 0, 0),
     word="#1C1C1C",
     phonetic="#3A3A3A",
     stats="#555555",
@@ -29,7 +29,7 @@ LIGHT = CardPalette(
 )
 
 DARK = CardPalette(
-    fill=(20, 20, 20, 180),
+    fill=(0, 0, 0, 0),
     word="#F5F5F5",
     phonetic="#C8C8C8",
     stats="#C8C8C8",
@@ -52,13 +52,11 @@ def palette_for(
         return DARK
     if preset != "custom":
         return LIGHT
+    del fill_color, fill_alpha
     text = _normalize_hex(text_color) or LIGHT.word
-    fill_hex = _normalize_hex(fill_color) or "#FFFFFF"
-    alpha = 88 if fill_alpha is None else max(20, min(230, int(fill_alpha)))
     buttons = DARK if button_preset == "dark" else LIGHT
-    red, green, blue = _rgb(fill_hex)
     return CardPalette(
-        fill=(red, green, blue, alpha),
+        fill=(0, 0, 0, 0),
         word=text,
         phonetic=text,
         stats=text,
@@ -82,7 +80,3 @@ def _normalize_hex(value: str | None) -> str | None:
         return None
     return text.upper()
 
-
-def _rgb(value: str) -> tuple[int, int, int]:
-    number = int(value[1:], 16)
-    return (number >> 16) & 255, (number >> 8) & 255, number & 255

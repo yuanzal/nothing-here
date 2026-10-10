@@ -174,33 +174,10 @@ class Tray(QObject):
         text = QColorDialog.getColor(_text_seed(self._style_preset, self._text_color), None, "文字颜色")
         if not text.isValid():
             return
-        fill_seed = _fill_seed(self._style_preset, self._fill_color, self._fill_alpha)
-        fill = QColorDialog.getColor(
-            fill_seed,
-            None,
-            "底色",
-            QColorDialog.ColorDialogOption.ShowAlphaChannel,
-        )
-        if not fill.isValid():
-            return
-        alpha = fill.alpha()
-        if alpha == 255:
-            suggested = self._fill_alpha if self._fill_alpha is not None else _preset_alpha(self._style_preset)
-            suggested = min(230, max(20, suggested))
-            value, accepted = QInputDialog.getInt(
-                None,
-                "底色透明度",
-                "透明度（20–230）",
-                suggested,
-                20,
-                230,
-            )
-            if not accepted:
-                return
-            alpha = value
-        else:
-            alpha = min(230, max(20, alpha))
-        self.style_custom_chosen.emit(text.name().upper(), fill.name().upper(), alpha)
+        # 底面保持透明。fill 只为了让已有的 custom 记录仍能通过校验。
+        fill = (self._fill_color or "#000000").upper()
+        alpha = 20 if self._fill_alpha is None else max(20, min(230, int(self._fill_alpha)))
+        self.style_custom_chosen.emit(text.name().upper(), fill, alpha)
 
     def _keep_word_surface(self, _checked: bool = False) -> None:
         del _checked
@@ -234,27 +211,6 @@ def _text_seed(preset: str, text_color: Optional[str]) -> QColor:
     if preset == "dark":
         return QColor("#F5F5F5")
     return QColor("#1C1C1C")
-
-
-def _fill_seed(preset: str, fill_color: Optional[str], fill_alpha: Optional[int]) -> QColor:
-    if preset == "custom" and fill_color:
-        color = QColor(fill_color)
-        if fill_alpha is not None:
-            color.setAlpha(fill_alpha)
-        return color
-    if preset == "dark":
-        color = QColor("#141414")
-        color.setAlpha(180)
-        return color
-    color = QColor("#FFFFFF")
-    color.setAlpha(88)
-    return color
-
-
-def _preset_alpha(preset: str) -> int:
-    if preset == "dark":
-        return 180
-    return 88
 
 
 def make_tray_icon() -> QIcon:
