@@ -47,7 +47,7 @@ Nothing Here 不是又一个全屏背单词 App：卡片可以贴在壁纸层，
 ## 快速开始
 
 ```powershell
-git clone <你的仓库 URL>
+git clone https://github.com/yuanzal/nothing-here.git
 cd nothing_here
 
 py -3 -m venv .venv
@@ -129,4 +129,8 @@ scripts/           # 词库构建、例句填充（离线，非运行时爬网�
 
 欢迎 Issue 与 PR。若你打算扩展新的功能面或词库，请先对照 `GLOSSARY.md` 与变更文档，避免和已有术语、单卡模型冲突。
 
-仓库若尚未添加 LICENSE，推送前请自行选定开源协议并补充 `LICENSE` 文件。
+许可证：本项目采用 MIT License 进行许可。
+
+你可以自由使用、修改、合并、发布、分发、再许可和/或销售本软件的副本，只需在分发时保留上述版权声明和许可声明。详情请参阅项目根目录下的 LICENSE 文件。
+
+第三方组件遵循各自开源协议。
