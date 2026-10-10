@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from pathlib import Path
+from nothing_here.paths import data_file
 
 from .json_source import JsonVocabSource
 from .protocol import Entry, VocabSource
 
-REPO_ROOT = Path(__file__).resolve().parents[3]
-IELTS_JSON = REPO_ROOT / "data" / "ielts.json"
+IELTS_JSON = data_file("ielts.json")
 
 
 def load_sources() -> list[VocabSource]:

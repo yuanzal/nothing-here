@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 from enum import Enum
-from pathlib import Path
-
 from PyQt6.QtCore import QElapsedTimer, QPoint, QPointF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QIcon, QImage, QMouseEvent, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
@@ -17,6 +15,7 @@ from PyQt6.QtWidgets import (
 )
 
 from nothing_here.domain.weight import accuracy_percent
+from nothing_here.paths import ui_asset
 from nothing_here.ui.style import LIGHT, CardPalette
 
 CARD_WIDTH = 300
@@ -27,7 +26,7 @@ PADDING = 16
 FINISHED_TEXT = "厉害啦，没有更多单词了"
 BURN_MS = 400
 SINK_PX = 12
-ROSE_SVG = Path(__file__).with_name("rose.svg")
+ROSE_SVG = ui_asset("rose.svg")
 
 
 class Face(Enum):
