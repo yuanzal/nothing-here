@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
+from dataclasses import replace
 from datetime import date
 from enum import Enum
 from typing import Optional
@@ -13,13 +14,30 @@ from PyQt6.QtWidgets import QApplication
 from nothing_here.desktop.host import DesktopHost
 from nothing_here.domain.daily import (
     DailyPlan,
-    ensure_day,
     grade,
     resolve_current,
     restore,
     set_goal,
     slay,
     switch_catalog,
+)
+from nothing_here.domain.spell import (
+    SpellMode,
+    SpellState,
+    accept_invite,
+    advance_spelling,
+    after_plan_change,
+    answers_match,
+    decline_invite,
+    dismiss_invite_on_hide,
+    empty_spell,
+    end_spelling,
+    ensure_spell_day,
+    exit_spell_modes,
+    mute_invite,
+    register_miss,
+    start_from_tray,
+    toggle_example,
 )
 from nothing_here.input.hotkey import HotkeyListener
 from nothing_here.storage.db import AppState, DailyRecord, Store
@@ -62,13 +80,21 @@ class App(QObject):
         self._bind_examples()
         self._progress = self._store.all_progress()
         self._slain = set(self._store.slain_words())
-        self._plan = _plan_from_store(self._store, persisted, _today())
-        self._plan = resolve_current(
-            self._plan,
+        self._spell = _spell_from_store(self._store, persisted, _today())
+        plan = resolve_current(
+            self._spell.plan,
             list(self._catalog),
             self._progress,
             slain=self._slain_seq(),
         )
+        if plan is not self._spell.plan:
+            self._spell = after_plan_change(
+                self._spell,
+                self._spell.plan,
+                plan,
+                self._progress,
+                consider_invite=False,
+            )
         self._origin = persisted.origin
         self._floating = persisted.floating
         self._hidden = persisted.hidden
@@ -90,13 +116,14 @@ class App(QObject):
             self._sources,
             self._active_id,
             self._floating,
-            self._plan.count,
-            self._plan.goal,
+            self._spell.plan.count,
+            self._spell.plan.goal,
             self._slain_items(),
             self._style_preset,
             self._text_color,
             self._fill_color,
             self._fill_alpha,
+            spell_tray=self._spell.tray_unlocked,
         )
         self._tray.show_cards.connect(self.show_cards)
         self._tray.hide_cards.connect(self.hide_cards)
@@ -108,6 +135,7 @@ class App(QObject):
         self._tray.style_preset_chosen.connect(self.choose_style_preset)
         self._tray.style_custom_chosen.connect(self.choose_custom_style)
         self._tray.surface_chosen.connect(self.choose_surface)
+        self._tray.spell_start_chosen.connect(self.start_spell_from_tray)
         self.visibility_hotkey_pressed.connect(self.toggle_visibility)
         self._hotkey = HotkeyListener(self.visibility_hotkey_pressed.emit)
         self._hotkey.start()
@@ -115,6 +143,14 @@ class App(QObject):
         self._day_timer.timeout.connect(self._check_day)
         self._day_timer.start(60_000)
         qt_app.aboutToQuit.connect(self._teardown)
+
+    @property
+    def _plan(self) -> DailyPlan:
+        return self._spell.plan
+
+    @_plan.setter
+    def _plan(self, value: DailyPlan) -> None:
+        self._spell = replace(self._spell, plan=value)
 
     def start(self) -> None:
         if not self._hidden:
@@ -125,12 +161,17 @@ class App(QObject):
             return
         self._check_day()
         self._hidden = False
-        self._plan = resolve_current(
-            self._plan,
+        before = self._spell.plan
+        after = resolve_current(
+            before,
             list(self._catalog),
             self._progress,
             slain=self._slain_seq(),
         )
+        if after is not before:
+            self._spell = after_plan_change(
+                self._spell, before, after, self._progress, consider_invite=False
+            )
         self._face = Face.FRONT
         if not self._floating and not self._host.available:
             self._notify_embed_failed()
@@ -147,6 +188,7 @@ class App(QObject):
         if self._view is ViewState.HIDDEN:
             return
         self._take_pending_slay()
+        self._spell = dismiss_invite_on_hide(self._spell)
         self._destroy_windows()
         self._view = ViewState.HIDDEN
         self._hidden = True
@@ -158,22 +200,43 @@ class App(QObject):
             return
         self._check_day()
         previous = self._plan
-        self._plan = set_goal(
+        was_mode = self._spell.mode
+        next_plan = set_goal(
             self._plan,
             goal,
             list(self._catalog),
             self._progress,
             slain=self._slain_seq(),
         )
-        if self._plan == previous:
+        if next_plan == previous and was_mode is SpellMode.NORMAL:
             return
-        word_changed = self._plan.current != previous.current
-        just_sealed = not previous.sealed and self._plan.sealed
-        if word_changed or just_sealed:
+        unsealed = previous.sealed and not next_plan.sealed
+        current_dropped = (
+            was_mode is not SpellMode.NORMAL
+            and previous.current is not None
+            and (
+                next_plan.current != previous.current
+                or (previous.current not in next_plan.collected and next_plan.sealed)
+            )
+        )
+        self._spell = replace(self._spell, plan=next_plan)
+        if unsealed or current_dropped or (
+            was_mode is not SpellMode.NORMAL and not next_plan.sealed
+        ):
+            self._spell = exit_spell_modes(self._spell)
             self._face = Face.FRONT
+        elif was_mode is SpellMode.NORMAL:
+            word_changed = next_plan.current != previous.current
+            just_sealed = not previous.sealed and next_plan.sealed
+            if word_changed or just_sealed:
+                self._face = Face.FRONT
+            if just_sealed:
+                self._spell = after_plan_change(
+                    self._spell, previous, next_plan, self._progress
+                )
         self._sync_daily_tray()
         if self._view is ViewState.VISIBLE:
-            if word_changed or just_sealed or self._card is None:
+            if self._card is None or self._face is Face.FRONT or was_mode is not SpellMode.NORMAL:
                 if not self._open_card(self._face):
                     self._notify_embed_failed()
                     self._view = ViewState.HIDDEN
@@ -221,14 +284,17 @@ class App(QObject):
         self._active_id = source_id
         self._catalog = self._catalogs[source_id]
         self._bind_examples()
-        self._plan = switch_catalog(
-            self._plan,
+        before = self._plan
+        after = switch_catalog(
+            before,
             list(self._catalog),
             self._progress,
             slain=self._slain_seq(),
         )
+        self._spell = exit_spell_modes(replace(self._spell, plan=after))
         self._face = Face.FRONT
         self._tray.set_active_source(source_id)
+        self._sync_daily_tray()
         if visible:
             needs_desktop = not self._floating and not self._host.available
             if needs_desktop or not self._open_card(Face.FRONT):
@@ -237,6 +303,27 @@ class App(QObject):
                 self._notify_embed_failed()
             else:
                 self._view = ViewState.VISIBLE
+        self._persist()
+
+    def start_spell_from_tray(self) -> None:
+        if self._burning:
+            return
+        self._check_day()
+        previous = self._spell
+        self._spell = start_from_tray(self._spell, self._progress)
+        if self._spell is previous or self._spell.mode is not SpellMode.SPELLING:
+            self._sync_daily_tray()
+            return
+        self._face = Face.FRONT
+        self._sync_daily_tray()
+        if self._view is ViewState.HIDDEN:
+            self.show_cards()
+        elif self._card is None:
+            if not self._open_card(Face.FRONT):
+                self._notify_embed_failed()
+                self._view = ViewState.HIDDEN
+        else:
+            self._render()
         self._persist()
 
     def restore_word(self, word: str) -> None:
@@ -304,7 +391,7 @@ class App(QObject):
         self._qt_app.quit()
 
     def _grade(self, known: bool) -> None:
-        if self._burning:
+        if self._burning or self._spell.mode is not SpellMode.NORMAL:
             return
         self._check_day()
         if self._view is not ViewState.VISIBLE or self._face is not Face.BACK:
@@ -313,13 +400,15 @@ class App(QObject):
             return
         correct, reviews = self._store.record(self._plan.current, known)
         self._progress[self._plan.current] = (correct, reviews)
-        self._plan = grade(
-            self._plan,
+        before = self._plan
+        after = grade(
+            before,
             known,
             list(self._catalog),
             self._progress,
             slain=self._slain_seq(),
         )
+        self._spell = after_plan_change(self._spell, before, after, self._progress)
         self._face = Face.FRONT
         self._sync_daily_tray()
         if self._card is None:
@@ -330,8 +419,79 @@ class App(QObject):
             self._render()
         self._persist()
 
+    def _on_invite_start(self) -> None:
+        self._spell = accept_invite(self._spell)
+        self._face = Face.FRONT
+        self._sync_daily_tray()
+        self._render()
+        self._persist()
+
+    def _on_invite_later(self) -> None:
+        self._spell = decline_invite(self._spell)
+        self._face = Face.FRONT
+        self._sync_daily_tray()
+        self._render()
+        self._persist()
+
+    def _on_invite_mute(self) -> None:
+        self._spell = mute_invite(self._spell)
+        self._face = Face.FRONT
+        self._sync_daily_tray()
+        self._render()
+        self._persist()
+
+    def _on_spell_end(self) -> None:
+        self._spell = end_spelling(self._spell)
+        self._face = Face.FRONT
+        self._sync_daily_tray()
+        self._render()
+        self._persist()
+
+    def _on_spell_submitted(self, typed: str) -> None:
+        if self._spell.mode is not SpellMode.SPELLING or self._plan.current is None:
+            return
+        word = self._plan.current
+        entry = self._catalog.get(word)
+        expected = entry.word if entry is not None else word
+        if answers_match(expected, typed):
+            self._spell = advance_spelling(
+                self._spell,
+                list(self._catalog),
+                self._progress,
+                slain=self._slain_seq(),
+            )
+            self._sync_daily_tray()
+            self._render()
+            self._persist()
+            return
+        self._spell = register_miss(self._spell)
+        if self._card is not None:
+            self._card.clear_spell_letters()
+            self._render()
+        self._persist()
+
+    def _toggle_face(self) -> None:
+        if self._burning or self._view is ViewState.HIDDEN or self._card is None:
+            return
+        if self._spell.mode is SpellMode.SPELLING:
+            self._spell = toggle_example(self._spell)
+            self._render()
+            self._persist()
+            return
+        if self._spell.mode is not SpellMode.NORMAL:
+            return
+        if self._plan.current is None or self._plan.current not in self._catalog:
+            return
+        self._face = Face.BACK if self._face is Face.FRONT else Face.FRONT
+        self._render()
+
     def _slay(self) -> None:
-        if self._burning or self._view is not ViewState.VISIBLE or self._face is not Face.BACK:
+        if (
+            self._burning
+            or self._spell.mode is not SpellMode.NORMAL
+            or self._view is not ViewState.VISIBLE
+            or self._face is not Face.BACK
+        ):
             return
         if self._card is None or self._plan.current is None:
             return
@@ -355,20 +515,14 @@ class App(QObject):
         self._pending_plan = None
         self._burning = False
         if pending is not None:
-            self._plan = pending
+            before = self._plan
+            self._spell = after_plan_change(self._spell, before, pending, self._progress)
         self._face = Face.FRONT
+        self._sync_daily_tray()
         if self._view is ViewState.VISIBLE and self._card is not None:
             self._render()
             self._card.finish_burn()
         self._persist()
-
-    def _toggle_face(self) -> None:
-        if self._burning or self._view is ViewState.HIDDEN or self._card is None:
-            return
-        if self._plan.current is None or self._plan.current not in self._catalog:
-            return
-        self._face = Face.BACK if self._face is Face.FRONT else Face.FRONT
-        self._render()
 
     def _open_card(self, face: Face) -> bool:
         self._destroy_windows()
@@ -382,6 +536,11 @@ class App(QObject):
         card.moved.connect(lambda x, y: self._move_card(x, y, persist=False))
         card.move_finished.connect(lambda x, y: self._move_card(x, y, persist=True))
         card.layer_requested.connect(self._request_layer_toggle)
+        card.invite_start.connect(self._on_invite_start)
+        card.invite_later.connect(self._on_invite_later)
+        card.invite_mute.connect(self._on_invite_mute)
+        card.spell_end.connect(self._on_spell_end)
+        card.spell_submitted.connect(self._on_spell_submitted)
         card.set_layer_floating(self._floating)
         card.apply_palette(self._palette())
         card.apply_layer(self._floating)
@@ -400,24 +559,43 @@ class App(QObject):
             return
         self._card.apply_palette(self._palette())
         self._card.set_layer_floating(self._floating)
-        word = self._plan.current
-        if not word or word not in self._catalog:
-            self._card.show_finished()
-        else:
-            entry = self._catalog[word]
-            correct, reviews = self._progress.get(word, (0, 0))
-            example = ""
-            if self._face is Face.BACK:
+        mode = self._spell.mode
+        if mode is SpellMode.INVITE:
+            self._card.show_invite()
+        elif mode is SpellMode.SPELLING:
+            word = self._plan.current
+            if not word or word not in self._catalog:
+                self._spell = end_spelling(self._spell)
+                self._card.show_finished()
+            else:
+                entry = self._catalog[word]
                 example = resolve_example(self._example_sources, entry.word)
-            self._card.set_content(
-                entry.word,
-                entry.phonetic,
-                entry.translation,
-                correct,
-                reviews,
-                self._face,
-                example,
-            )
+                self._card.show_spelling(
+                    entry.word,
+                    entry.phonetic,
+                    entry.translation,
+                    example,
+                    self._spell.example_open,
+                )
+        else:
+            word = self._plan.current
+            if not word or word not in self._catalog:
+                self._card.show_finished()
+            else:
+                entry = self._catalog[word]
+                correct, reviews = self._progress.get(word, (0, 0))
+                example = ""
+                if self._face is Face.BACK:
+                    example = resolve_example(self._example_sources, entry.word)
+                self._card.set_content(
+                    entry.word,
+                    entry.phonetic,
+                    entry.translation,
+                    correct,
+                    reviews,
+                    self._face,
+                    example,
+                )
         self._host.set_click_through(self._card, False)
         placed = self._host.place([self._card], MIN_FRONT_HEIGHT, [self._origin])
         if self._origin is not None and placed:
@@ -453,6 +631,12 @@ class App(QObject):
                 collected=self._plan.collected,
                 queue=self._plan.queue,
                 phase=self._plan.phase,
+                spell_mode=self._spell.mode.value,
+                spell_cooldown=self._spell.cooldown,
+                spell_mute=self._spell.mute_invite,
+                spell_tray=self._spell.tray_unlocked,
+                spell_misses=self._spell.miss_count,
+                spell_example_open=self._spell.example_open,
             )
         )
 
@@ -481,6 +665,7 @@ class App(QObject):
 
     def _sync_daily_tray(self) -> None:
         self._tray.set_daily_progress(self._plan.count, self._plan.goal)
+        self._tray.set_spell_tray_visible(self._spell.tray_unlocked)
 
     def _sync_style_tray(self) -> None:
         self._tray.set_style_state(
@@ -506,11 +691,15 @@ class App(QObject):
     def _check_day(self) -> None:
         if self._burning:
             return
-        updated = ensure_day(self._plan, _today())
-        if updated is self._plan:
+        today = _today()
+        updated = ensure_spell_day(self._spell, today)
+        if updated is self._spell:
             return
-        self._plan = updated
+        self._spell = updated
+        self._face = Face.FRONT
         self._sync_daily_tray()
+        if self._view is ViewState.VISIBLE and self._card is not None:
+            self._render()
         self._persist()
 
     def _notify_embed_failed(self) -> None:
@@ -538,24 +727,38 @@ class App(QObject):
         return [(word, self._spellings.get(word, word)) for word in self._store.slain_words()]
 
 
-def _plan_from_store(store: Store, persisted: AppState, today: str) -> DailyPlan:
+def _spell_from_store(store: Store, persisted: AppState, today: str) -> SpellState:
     record = store.load_daily()
     if record is None or record.day != today:
-        return DailyPlan(
-            goal=persisted.daily_goal,
-            day=today,
-            collected=(),
-            queue=(),
-            phase=0,
-            current=persisted.word,
+        return empty_spell(
+            DailyPlan(
+                goal=persisted.daily_goal,
+                day=today,
+                collected=(),
+                queue=(),
+                phase=0,
+                current=persisted.word,
+            )
         )
-    return DailyPlan(
+    plan = DailyPlan(
         goal=persisted.daily_goal,
         day=record.day,
         collected=record.collected,
         queue=record.queue,
         phase=record.phase,
         current=persisted.word,
+    )
+    mode = SpellMode.NORMAL
+    if record.spell_mode == "spelling" and plan.current is not None:
+        mode = SpellMode.SPELLING
+    return SpellState(
+        plan=plan,
+        mode=mode,
+        cooldown=record.spell_cooldown,
+        mute_invite=record.spell_mute,
+        tray_unlocked=record.spell_tray,
+        miss_count=record.spell_misses if mode is SpellMode.SPELLING else 0,
+        example_open=record.spell_example_open if mode is SpellMode.SPELLING else False,
     )
 
 

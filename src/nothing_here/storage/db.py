@@ -40,6 +40,12 @@ class DailyRecord:
     collected: tuple[str, ...]
     queue: tuple[str, ...]
     phase: int
+    spell_mode: str = "normal"
+    spell_cooldown: int = 0
+    spell_mute: bool = False
+    spell_tray: bool = False
+    spell_misses: int = 0
+    spell_example_open: bool = False
 
 
 class Store:
@@ -95,7 +101,13 @@ class Store:
                 day TEXT NOT NULL,
                 collected TEXT NOT NULL,
                 queue TEXT NOT NULL,
-                phase INTEGER NOT NULL
+                phase INTEGER NOT NULL,
+                spell_mode TEXT NOT NULL DEFAULT 'normal',
+                spell_cooldown INTEGER NOT NULL DEFAULT 0,
+                spell_mute INTEGER NOT NULL DEFAULT 0,
+                spell_tray INTEGER NOT NULL DEFAULT 0,
+                spell_misses INTEGER NOT NULL DEFAULT 0,
+                spell_example_open INTEGER NOT NULL DEFAULT 0
             );
             """
         )
@@ -133,6 +145,18 @@ class Store:
             self._conn.execute(
                 "ALTER TABLE app_state ADD COLUMN button_preset TEXT NOT NULL DEFAULT 'light'"
             )
+        daily_cols = {str(row[1]) for row in self._conn.execute("PRAGMA table_info(daily_state)")}
+        daily_defaults = (
+            ("spell_mode", "TEXT NOT NULL DEFAULT 'normal'"),
+            ("spell_cooldown", "INTEGER NOT NULL DEFAULT 0"),
+            ("spell_mute", "INTEGER NOT NULL DEFAULT 0"),
+            ("spell_tray", "INTEGER NOT NULL DEFAULT 0"),
+            ("spell_misses", "INTEGER NOT NULL DEFAULT 0"),
+            ("spell_example_open", "INTEGER NOT NULL DEFAULT 0"),
+        )
+        for name, decl in daily_defaults:
+            if name not in daily_cols:
+                self._conn.execute(f"ALTER TABLE daily_state ADD COLUMN {name} {decl}")
 
     def get_progress(self, word: str) -> tuple[int, int]:
         row = self._conn.execute(
@@ -306,34 +330,79 @@ class Store:
 
     def load_daily(self) -> Optional[DailyRecord]:
         row = self._conn.execute(
-            "SELECT day, collected, queue, phase FROM daily_state WHERE id = 1"
+            """
+            SELECT day, collected, queue, phase,
+                   spell_mode, spell_cooldown, spell_mute, spell_tray,
+                   spell_misses, spell_example_open
+            FROM daily_state WHERE id = 1
+            """
         ).fetchone()
         if row is None:
             return None
-        day, collected, queue, phase = row
+        (
+            day,
+            collected,
+            queue,
+            phase,
+            spell_mode,
+            spell_cooldown,
+            spell_mute,
+            spell_tray,
+            spell_misses,
+            spell_example_open,
+        ) = row
+        mode = str(spell_mode or "normal")
+        if mode not in ("normal", "invite", "spelling"):
+            mode = "normal"
+        # 邀请不因上次挂着而恢复
+        if mode == "invite":
+            mode = "normal"
         return DailyRecord(
             day=str(day),
             collected=_words(collected),
             queue=_words(queue),
             phase=max(0, min(2, int(phase))),
+            spell_mode=mode,
+            spell_cooldown=max(0, min(2, int(spell_cooldown or 0))),
+            spell_mute=bool(spell_mute),
+            spell_tray=bool(spell_tray),
+            spell_misses=max(0, min(10, int(spell_misses or 0))),
+            spell_example_open=bool(spell_example_open),
         )
 
     def save_daily(self, record: DailyRecord) -> None:
+        mode = record.spell_mode if record.spell_mode in ("normal", "invite", "spelling") else "normal"
         self._conn.execute(
             """
-            INSERT INTO daily_state(id, day, collected, queue, phase)
-            VALUES (1, ?, ?, ?, ?)
+            INSERT INTO daily_state(
+                id, day, collected, queue, phase,
+                spell_mode, spell_cooldown, spell_mute, spell_tray,
+                spell_misses, spell_example_open
+            )
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 day = excluded.day,
                 collected = excluded.collected,
                 queue = excluded.queue,
-                phase = excluded.phase
+                phase = excluded.phase,
+                spell_mode = excluded.spell_mode,
+                spell_cooldown = excluded.spell_cooldown,
+                spell_mute = excluded.spell_mute,
+                spell_tray = excluded.spell_tray,
+                spell_misses = excluded.spell_misses,
+                spell_example_open = excluded.spell_example_open
             """,
             (
                 record.day,
                 json.dumps(list(record.collected), ensure_ascii=False),
                 json.dumps(list(record.queue), ensure_ascii=False),
                 record.phase,
+                mode,
+                max(0, min(2, int(record.spell_cooldown))),
+                1 if record.spell_mute else 0,
+                1 if record.spell_tray else 0,
+                max(0, min(10, int(record.spell_misses))),
+                1 if record.spell_example_open else 0,
             ),
         )
         self._conn.commit()

@@ -21,6 +21,7 @@ class Tray(QObject):
     style_preset_chosen = pyqtSignal(str)
     style_custom_chosen = pyqtSignal(str, str, int)
     surface_chosen = pyqtSignal(str)
+    spell_start_chosen = pyqtSignal()
 
     def __init__(
         self,
@@ -34,6 +35,7 @@ class Tray(QObject):
         text_color: Optional[str] = None,
         fill_color: Optional[str] = None,
         fill_alpha: Optional[int] = None,
+        spell_tray: bool = False,
     ) -> None:
         super().__init__()
         self._goal = goal
@@ -48,6 +50,8 @@ class Tray(QObject):
         show_action = menu.addAction("显示卡片")
         hide_action = menu.addAction("隐藏卡片    Ctrl+Alt+S")
         self._goal_action = menu.addAction(_goal_label(collected, goal))
+        self._spell_action = menu.addAction("开始拼写测试")
+        self._spell_action.triggered.connect(self.spell_start_chosen.emit)
         self._recycle_menu = menu.addMenu("回收站")
         style_menu = menu.addMenu("风格")
         self._light_action = style_menu.addAction("浅色")
@@ -98,8 +102,12 @@ class Tray(QObject):
         quit_action.triggered.connect(self.quit_requested.emit)
         self._icon.setContextMenu(menu)
         self.set_style_state(style_preset, text_color, fill_color, fill_alpha)
+        self.set_spell_tray_visible(spell_tray)
         self._rebuild_slain()
         self._icon.show()
+
+    def set_spell_tray_visible(self, visible: bool) -> None:
+        self._spell_action.setVisible(visible)
 
     def show_embed_failed(self) -> None:
         self._icon.showMessage(

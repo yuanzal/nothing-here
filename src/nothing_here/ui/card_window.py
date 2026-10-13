@@ -14,6 +14,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from nothing_here.domain.spell import SpellCell, cells_for
 from nothing_here.domain.weight import accuracy_percent
 from nothing_here.paths import ui_asset
 from nothing_here.ui.style import LIGHT, CardPalette
@@ -24,8 +25,11 @@ MARGIN_TOP = 24
 CARD_GAP = 12
 PADDING = 16
 FINISHED_TEXT = "厉害啦，没有更多单词了"
+INVITE_TEXT = "是否开始拼写测试？"
 BURN_MS = 400
 SINK_PX = 12
+CELL_SIZE = 22
+CELL_GAP = 4
 ROSE_SVG = ui_asset("rose.svg")
 
 
@@ -87,10 +91,16 @@ class _Body(QWidget):
         super().mouseReleaseEvent(event)
 
     def _forward_button(self, event: QMouseEvent) -> bool:
-        button = _button_at(self, event.position().toPoint())
-        if button is None or not button.isEnabled():
+        target = _interactive_at(self, event.position().toPoint())
+        if target is None:
             return False
-        local = QPointF(button.mapFrom(self, event.position().toPoint()))
+        if isinstance(target, _SpellGrid):
+            target.setFocus(Qt.FocusReason.MouseFocusReason)
+            event.accept()
+            return True
+        if isinstance(target, QPushButton) and not target.isEnabled():
+            return False
+        local = QPointF(target.mapFrom(self, event.position().toPoint()))
         forwarded = QMouseEvent(
             event.type(),
             local,
@@ -99,7 +109,7 @@ class _Body(QWidget):
             event.buttons(),
             event.modifiers(),
         )
-        QApplication.sendEvent(button, forwarded)
+        QApplication.sendEvent(target, forwarded)
         event.accept()
         return True
 
@@ -120,6 +130,11 @@ class CardWindow(QWidget):
     moved = pyqtSignal(int, int)
     move_finished = pyqtSignal(int, int)
     layer_requested = pyqtSignal()
+    invite_start = pyqtSignal()
+    invite_later = pyqtSignal()
+    invite_mute = pyqtSignal()
+    spell_end = pyqtSignal()
+    spell_submitted = pyqtSignal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -133,6 +148,8 @@ class CardWindow(QWidget):
         self._sink = 0
         self._burning = False
         self._burn_pending = False
+        self._accept_focus = False
+        self._spell_word = ""
         self._burn_clock = QElapsedTimer()
         self._burn_timer = QTimer(self)
         self._burn_timer.setInterval(16)
@@ -150,6 +167,10 @@ class CardWindow(QWidget):
         self._done = QLabel(FINISHED_TEXT)
         self._done.setWordWrap(True)
         self._done.setFont(_px_font("Microsoft YaHei", 16))
+
+        self._invite = QLabel(INVITE_TEXT)
+        self._invite.setWordWrap(True)
+        self._invite.setFont(_px_font("Microsoft YaHei", 16))
 
         self._word = QLabel()
         self._word.setWordWrap(True)
@@ -170,6 +191,9 @@ class CardWindow(QWidget):
         self._example = QLabel()
         self._example.setWordWrap(True)
         self._example.setFont(_px_font("Segoe UI", 14))
+
+        self._spell_grid = _SpellGrid(self)
+        self._spell_grid.submitted.connect(self.spell_submitted.emit)
 
         self._reveal = QPushButton("译文")
         self._reveal.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -195,6 +219,32 @@ class CardWindow(QWidget):
         self._unknown.clicked.connect(self.unknown.emit)
         self._rose.clicked.connect(self.slay_requested.emit)
 
+        self._invite_start = QPushButton("开始")
+        self._invite_later = QPushButton("暂不")
+        self._invite_mute = QPushButton("今日不再提示")
+        for button in (self._invite_start, self._invite_later, self._invite_mute):
+            button.setCursor(Qt.CursorShape.PointingHandCursor)
+            button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._invite_start.clicked.connect(self.invite_start.emit)
+        self._invite_later.clicked.connect(self.invite_later.emit)
+        self._invite_mute.clicked.connect(self.invite_mute.emit)
+        invite_buttons = QHBoxLayout()
+        invite_buttons.setContentsMargins(0, 4, 0, 0)
+        invite_buttons.setSpacing(8)
+        invite_buttons.addWidget(self._invite_start)
+        invite_buttons.addWidget(self._invite_later)
+        invite_buttons.addWidget(self._invite_mute)
+        self._invite_row = QWidget()
+        self._invite_row.setLayout(invite_buttons)
+        self._invite_row.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self._invite_row.setCursor(Qt.CursorShape.ArrowCursor)
+
+        self._spell_end = QPushButton("结束拼写")
+        self._spell_end.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._spell_end.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._spell_end.clicked.connect(self.spell_end.emit)
+
         self._layer = QPushButton("浮在窗口上")
         self._layer.setCursor(Qt.CursorShape.PointingHandCursor)
         self._layer.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -213,6 +263,7 @@ class CardWindow(QWidget):
 
         for label in (
             self._done,
+            self._invite,
             self._word,
             self._phonetic,
             self._stats,
@@ -221,33 +272,44 @@ class CardWindow(QWidget):
         ):
             label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         layout.addWidget(self._done)
+        layout.addWidget(self._invite)
         layout.addWidget(self._word)
         layout.addWidget(self._phonetic)
         layout.addWidget(self._stats)
-        layout.addWidget(self._reveal)
         layout.addWidget(self._translation)
+        layout.addWidget(self._spell_grid)
+        layout.addWidget(self._reveal)
         layout.addWidget(self._example)
         layout.addWidget(self._button_row)
+        layout.addWidget(self._invite_row)
+        layout.addWidget(self._spell_end)
         layout.addWidget(self._layer)
         self._done.hide()
+        self._invite.hide()
         self._example.hide()
+        self._spell_grid.hide()
+        self._invite_row.hide()
+        self._spell_end.hide()
         self.apply_palette(LIGHT)
 
     def apply_layer(self, floating: bool) -> None:
         flags = (
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.Tool
-            | Qt.WindowType.WindowDoesNotAcceptFocus
             | Qt.WindowType.NoDropShadowWindowHint
         )
+        if not self._accept_focus:
+            flags |= Qt.WindowType.WindowDoesNotAcceptFocus
         if floating:
             flags |= Qt.WindowType.WindowStaysOnTopHint
         self.setWindowFlags(flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, not self._accept_focus)
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setFocusPolicy(
+            Qt.FocusPolicy.ClickFocus if self._accept_focus else Qt.FocusPolicy.NoFocus
+        )
 
     def apply_palette(self, palette: CardPalette) -> None:
         self._palette = palette
@@ -297,6 +359,8 @@ class CardWindow(QWidget):
     ) -> None:
         self._face = face
         self._scroll_offset = 0
+        self._accept_focus = False
+        self._hide_special_modes()
         show_back = face is Face.BACK
         self._done.hide()
         self._word.setText(word)
@@ -319,6 +383,8 @@ class CardWindow(QWidget):
 
     def show_finished(self) -> None:
         self._scroll_offset = 0
+        self._accept_focus = False
+        self._hide_special_modes()
         self._done.show()
         self._word.hide()
         self._phonetic.hide()
@@ -330,6 +396,72 @@ class CardWindow(QWidget):
         self._layer.show()
         self._position_body()
         self.update()
+
+    def show_invite(self) -> None:
+        self._scroll_offset = 0
+        self._accept_focus = False
+        self._done.hide()
+        self._word.hide()
+        self._phonetic.hide()
+        self._stats.hide()
+        self._translation.hide()
+        self._example.hide()
+        self._spell_grid.hide()
+        self._reveal.hide()
+        self._button_row.hide()
+        self._spell_end.hide()
+        self._invite.show()
+        self._invite_row.show()
+        self._layer.show()
+        self._position_body()
+        self.update()
+
+    def show_spelling(
+        self,
+        word: str,
+        phonetic: str,
+        translation: str,
+        example: str = "",
+        example_open: bool = False,
+        filled: str | None = None,
+    ) -> None:
+        self._scroll_offset = 0
+        self._accept_focus = True
+        self._spell_word = word
+        self._done.hide()
+        self._invite.hide()
+        self._invite_row.hide()
+        self._word.hide()
+        self._stats.hide()
+        self._button_row.hide()
+        self._translation.setText(translation)
+        self._translation.show()
+        self._phonetic.setText(phonetic)
+        self._phonetic.setVisible(bool(phonetic))
+        self._spell_grid.show()
+        self._spell_grid.set_word(word, filled)
+        self._reveal.setText("收起" if example_open else "译文")
+        self._reveal.show()
+        sentence = example.strip()
+        self._example.setText(sentence)
+        self._example.setVisible(example_open and bool(sentence))
+        self._spell_end.show()
+        self._layer.show()
+        self._position_body()
+        self.update()
+        self._spell_grid.grabKeyboard()
+        self._spell_grid.setFocus(Qt.FocusReason.OtherFocusReason)
+
+    def clear_spell_letters(self) -> None:
+        if self._spell_word:
+            self._spell_grid.set_word(self._spell_word, None)
+
+    def _hide_special_modes(self) -> None:
+        self._spell_grid.releaseKeyboard()
+        self._invite.hide()
+        self._invite_row.hide()
+        self._spell_grid.hide()
+        self._spell_end.hide()
 
     def play_burn(self) -> None:
         if self._burning:
@@ -410,6 +542,7 @@ class CardWindow(QWidget):
         palette = self._palette
         fade = self._fade
         self._done.setStyleSheet(_text_style(palette.word, fade))
+        self._invite.setStyleSheet(_text_style(palette.word, fade))
         self._word.setStyleSheet(_text_style(palette.word, fade))
         self._phonetic.setStyleSheet(_text_style(palette.phonetic, fade))
         self._stats.setStyleSheet(_text_style(palette.stats, fade))
@@ -420,12 +553,26 @@ class CardWindow(QWidget):
         self._known.setStyleSheet(known)
         self._unknown.setStyleSheet(_button_style(palette.unknown_bg, palette.button_fg, fade))
         self._layer.setStyleSheet(known)
+        self._spell_end.setStyleSheet(known)
+        for button in (self._invite_start, self._invite_later, self._invite_mute):
+            button.setStyleSheet(known)
+        self._spell_grid.apply_palette(palette, fade)
         self._rose.setStyleSheet(_rose_style())
         self._rose.setIcon(_rose_icon(QColor(palette.button_fg)))
         self.update()
 
     def _set_buttons_enabled(self, enabled: bool) -> None:
-        for button in (self._reveal, self._known, self._unknown, self._rose, self._layer):
+        for button in (
+            self._reveal,
+            self._known,
+            self._unknown,
+            self._rose,
+            self._layer,
+            self._invite_start,
+            self._invite_later,
+            self._invite_mute,
+            self._spell_end,
+        ):
             button.setEnabled(enabled)
 
     def _content_height(self) -> int:
@@ -457,13 +604,146 @@ def _px_font(family: str, px: int, bold: bool = False) -> QFont:
     return font
 
 
-def _button_at(origin: QWidget, pos: QPoint) -> QPushButton | None:
+def _interactive_at(origin: QWidget, pos: QPoint) -> QWidget | None:
     widget = origin.childAt(pos)
     while widget is not None and widget is not origin:
-        if isinstance(widget, QPushButton):
+        if isinstance(widget, (QPushButton, _SpellGrid)):
             return widget
         widget = widget.parentWidget()
     return None
+
+
+class _SpellGrid(QWidget):
+    submitted = pyqtSignal(str)
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setCursor(Qt.CursorShape.IBeamCursor)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 4, 0, 4)
+        self._layout.setSpacing(6)
+        self._cells: tuple[SpellCell, ...] = ()
+        self._labels: list[QLabel] = []
+        self._values: list[str] = []
+        self._cursor = 0
+        self._ink = "#1C1C1C"
+        self._border = "rgba(28, 28, 28, 120)"
+
+    def apply_palette(self, palette: CardPalette, fade: float) -> None:
+        self._ink = _hex_rgba(palette.word, fade)
+        self._border = _tuple_rgba(palette.known_bg, fade, boost=40)
+        self._refresh_labels()
+
+    def set_word(self, word: str, filled: str | None = None) -> None:
+        self._cells = cells_for(word)
+        self._values = []
+        index = 0
+        for cell in self._cells:
+            if cell.fixed:
+                continue
+            if filled is not None and index < len(filled):
+                self._values.append(filled[index])
+            else:
+                self._values.append("")
+            index += 1
+        self._cursor = next((i for i, value in enumerate(self._values) if not value), len(self._values))
+        self._rebuild()
+
+    def keyPressEvent(self, event) -> None:  # noqa: N802
+        key = event.key()
+        text = event.text()
+        if key in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete):
+            if self._cursor > 0:
+                self._cursor -= 1
+                self._values[self._cursor] = ""
+                self._refresh_labels()
+            event.accept()
+            return
+        if len(text) == 1 and text.isalpha():
+            if self._cursor < len(self._values):
+                self._values[self._cursor] = text
+                self._cursor += 1
+                self._refresh_labels()
+                if self._cursor >= len(self._values) and all(self._values):
+                    self.submitted.emit(self._assembled())
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def _assembled(self) -> str:
+        letters = list(self._values)
+        out: list[str] = []
+        letter_i = 0
+        for cell in self._cells:
+            if cell.fixed:
+                out.append(cell.text)
+            else:
+                out.append(letters[letter_i] if letter_i < len(letters) else "")
+                letter_i += 1
+        return "".join(out)
+
+    def _rebuild(self) -> None:
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            row = item.widget()
+            if row is not None:
+                row.deleteLater()
+        self._labels = []
+        row_layout: QHBoxLayout | None = None
+        row_widget: QWidget | None = None
+        used = 0
+        max_width = CARD_WIDTH - 2 * PADDING
+        letter_i = 0
+        for cell in self._cells:
+            need = CELL_SIZE + CELL_GAP
+            if row_layout is None or used + need > max_width:
+                row_widget = QWidget(self)
+                row_widget.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+                row_layout = QHBoxLayout(row_widget)
+                row_layout.setContentsMargins(0, 0, 0, 0)
+                row_layout.setSpacing(CELL_GAP)
+                row_layout.addStretch(1)
+                self._layout.addWidget(row_widget)
+                used = 0
+            label = QLabel()
+            label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            label.setFixedSize(CELL_SIZE, CELL_SIZE)
+            label.setFont(_px_font("Segoe UI", 14, bold=True))
+            if cell.fixed:
+                label.setText(cell.text if cell.text != " " else "·")
+            else:
+                label.setText(self._values[letter_i])
+                letter_i += 1
+            self._labels.append(label)
+            assert row_layout is not None
+            row_layout.insertWidget(row_layout.count() - 1, label)
+            used += need
+        self._refresh_labels()
+
+    def _refresh_labels(self) -> None:
+        letter_i = 0
+        for index, cell in enumerate(self._cells):
+            if index >= len(self._labels):
+                break
+            label = self._labels[index]
+            if cell.fixed:
+                shown = cell.text if cell.text != " " else "·"
+                label.setText(shown)
+                label.setStyleSheet(
+                    f"color: {self._ink}; background: transparent; border: none;"
+                )
+            else:
+                value = self._values[letter_i] if letter_i < len(self._values) else ""
+                label.setText(value.upper() if value else "")
+                active = letter_i == self._cursor
+                border = self._border if not active else self._ink
+                label.setStyleSheet(
+                    f"color: {self._ink}; background: transparent;"
+                    f"border: 1px solid {border}; border-radius: 4px;"
+                )
+                letter_i += 1
 
 
 def _scaled(alpha: int, fade: float) -> int:
