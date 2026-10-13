@@ -34,7 +34,15 @@ _SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 def fill_file(path: Path, dump_path: Path, cache_path: Path) -> tuple[int, int, int]:
     rows = json.loads(path.read_text(encoding="utf-8"))
-    examples, tatoeba_hits = sentences_from_tatoeba(rows, dump_path)
+    # 先保住 JSON 里已有的真人例句；Tatoeba 命中可覆盖，都没有再走有道。
+    examples: dict[str, str] = {}
+    for row in rows:
+        word = str(row.get("word") or "").strip().casefold()
+        example = str(row.get("example") or "").strip()
+        if word and example:
+            examples[word] = example
+    tatoeba, tatoeba_hits = sentences_from_tatoeba(rows, dump_path)
+    examples.update(tatoeba)
     missing = [str(row.get("word") or "").strip() for row in rows]
     missing = [word for word in missing if word and not examples.get(word.casefold())]
     youdao_hits = fill_from_youdao(missing, examples, cache_path)
@@ -320,22 +328,32 @@ def _download_dump(path: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Fill vocab JSON with real example sentences.")
-    parser.add_argument("json_path", type=Path, nargs="?", default=DEFAULT_JSON)
+    parser.add_argument(
+        "json_paths",
+        type=Path,
+        nargs="*",
+        default=[DEFAULT_JSON],
+        help="One or more vocab JSON files (default: data/ielts.json)",
+    )
     parser.add_argument("--dump", type=Path, default=DEFAULT_DUMP)
     parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
     args = parser.parse_args(argv)
-    if not args.json_path.is_file():
-        print(f"JSON not found: {args.json_path}", file=sys.stderr)
-        return 1
+    paths = args.json_paths or [DEFAULT_JSON]
+    for path in paths:
+        if not path.is_file():
+            print(f"JSON not found: {path}", file=sys.stderr)
+            return 1
     if not args.dump.is_file():
         print(f"downloading Tatoeba sentences to {args.dump}", file=sys.stderr)
         _download_dump(args.dump)
-    filled, tatoeba_hits, youdao_hits = fill_file(args.json_path, args.dump, args.cache)
-    total = json.loads(args.json_path.read_text(encoding="utf-8"))
-    print(
-        f"wrote {filled} examples of {len(total)} entries "
-        f"({tatoeba_hits} from Tatoeba, {youdao_hits} from Youdao)"
-    )
+    for path in paths:
+        print(f"filling {path}", file=sys.stderr)
+        filled, tatoeba_hits, youdao_hits = fill_file(path, args.dump, args.cache)
+        total = json.loads(path.read_text(encoding="utf-8"))
+        print(
+            f"{path.name}: wrote {filled} examples of {len(total)} entries "
+            f"({tatoeba_hits} from Tatoeba, {youdao_hits} from Youdao)"
+        )
     return 0
 
 
