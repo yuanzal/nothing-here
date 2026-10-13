@@ -11,7 +11,7 @@ from nothing_here.domain.daily import DailyPlan, Progress
 from nothing_here.domain.sample import WeightedWord, pick_one
 from nothing_here.domain.weight import weight
 
-MISS_LIMIT = 10
+MISS_LIMIT = 6
 _FIXED = frozenset(" -'")
 
 

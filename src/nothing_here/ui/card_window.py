@@ -137,6 +137,7 @@ class CardWindow(QWidget):
     invite_later = pyqtSignal()
     invite_mute = pyqtSignal()
     spell_end = pyqtSignal()
+    spell_skip = pyqtSignal()
     spell_submitted = pyqtSignal(str)
 
     def __init__(self) -> None:
@@ -250,6 +251,11 @@ class CardWindow(QWidget):
         self._spell_end.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._spell_end.clicked.connect(self.spell_end.emit)
 
+        self._spell_skip = QPushButton("换一个")
+        self._spell_skip.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._spell_skip.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self._spell_skip.clicked.connect(self.spell_skip.emit)
+
         self._layer = QPushButton("浮在窗口上")
         self._layer.setCursor(Qt.CursorShape.PointingHandCursor)
         self._layer.setFocusPolicy(Qt.FocusPolicy.NoFocus)
@@ -285,6 +291,7 @@ class CardWindow(QWidget):
         layout.addWidget(self._spell_grid)
         layout.addWidget(self._reveal)
         layout.addWidget(self._example)
+        layout.addWidget(self._spell_skip)
         layout.addWidget(self._button_row)
         layout.addWidget(self._invite_row)
         layout.addWidget(self._spell_end)
@@ -295,6 +302,7 @@ class CardWindow(QWidget):
         self._spell_grid.hide()
         self._invite_row.hide()
         self._spell_end.hide()
+        self._spell_skip.hide()
         self.apply_palette(LIGHT)
 
     def apply_layer(self, floating: bool) -> None:
@@ -457,6 +465,7 @@ class CardWindow(QWidget):
         sentence = example.strip()
         self._example.setText(sentence)
         self._example.setVisible(example_open and bool(sentence))
+        self._spell_skip.setVisible(example_open)
         self._spell_end.show()
         self._layer.show()
         self._spell_grid.updateGeometry()
@@ -491,6 +500,7 @@ class CardWindow(QWidget):
         self._invite_row.hide()
         self._spell_grid.hide()
         self._spell_end.hide()
+        self._spell_skip.hide()
 
     def play_burn(self) -> None:
         if self._burning:
@@ -583,6 +593,7 @@ class CardWindow(QWidget):
         self._unknown.setStyleSheet(_button_style(palette.unknown_bg, palette.button_fg, fade))
         self._layer.setStyleSheet(known)
         self._spell_end.setStyleSheet(known)
+        self._spell_skip.setStyleSheet(known)
         for button in (self._invite_start, self._invite_later, self._invite_mute):
             button.setStyleSheet(known)
         self._spell_grid.apply_palette(palette, fade)
@@ -601,6 +612,7 @@ class CardWindow(QWidget):
             self._invite_later,
             self._invite_mute,
             self._spell_end,
+            self._spell_skip,
         ):
             button.setEnabled(enabled)
 
@@ -798,7 +810,7 @@ class _SpellGrid(QWidget):
             if cell.fixed:
                 label.setText(cell.text if cell.text != " " else "·")
             else:
-                label.setText(self._values[letter_i].upper() if self._values[letter_i] else "")
+                label.setText(self._values[letter_i] if self._values[letter_i] else "")
                 letter_i += 1
             self._labels.append(label)
             assert row_layout is not None
@@ -824,7 +836,7 @@ class _SpellGrid(QWidget):
                 )
             else:
                 value = self._values[letter_i] if letter_i < len(self._values) else ""
-                label.setText(value.upper() if value else "")
+                label.setText(value if value else "")
                 active = letter_i == self._cursor
                 border = self._ink if active else self._border
                 fill = self._fill_active if active else self._fill

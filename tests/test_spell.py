@@ -6,6 +6,7 @@ from dataclasses import replace
 
 from nothing_here.domain.daily import DailyPlan, grade
 from nothing_here.domain.spell import (
+    MISS_LIMIT,
     SpellMode,
     accept_invite,
     advance_spelling,
@@ -156,14 +157,29 @@ class SpellTests(unittest.TestCase):
         self.assertEqual(spell.mode, SpellMode.SPELLING)
         self.assertEqual(spell.cooldown, 0)
 
-    def test_misses_open_example_at_ten(self) -> None:
+    def test_misses_open_example_at_six(self) -> None:
         spell = replace(empty_spell(sealed()), mode=SpellMode.SPELLING)
-        for _ in range(9):
+        for _ in range(MISS_LIMIT - 1):
             spell = register_miss(spell)
         self.assertFalse(spell.example_open)
+        self.assertEqual(spell.miss_count, MISS_LIMIT - 1)
         spell = register_miss(spell)
         self.assertTrue(spell.example_open)
-        self.assertEqual(spell.miss_count, 10)
+        self.assertEqual(spell.miss_count, MISS_LIMIT)
+
+    def test_skip_while_example_open_advances(self) -> None:
+        plan = sealed()
+        first = plan.current
+        spell = replace(
+            empty_spell(plan),
+            mode=SpellMode.SPELLING,
+            miss_count=6,
+            example_open=True,
+        )
+        spell = advance_spelling(spell, FOUR, MASTERED)
+        self.assertEqual(spell.miss_count, 0)
+        self.assertFalse(spell.example_open)
+        self.assertNotEqual(spell.plan.current, first)
 
     def test_cells_and_assemble_keep_punctuation(self) -> None:
         cells = cells_for("CD-ROM")

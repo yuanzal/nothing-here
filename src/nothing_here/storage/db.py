@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from nothing_here.domain.spell import MISS_LIMIT
+
 
 def default_db_path() -> Path:
     appdata = os.environ.get("APPDATA")
@@ -366,7 +368,7 @@ class Store:
             spell_cooldown=max(0, min(2, int(spell_cooldown or 0))),
             spell_mute=bool(spell_mute),
             spell_tray=bool(spell_tray),
-            spell_misses=max(0, min(10, int(spell_misses or 0))),
+            spell_misses=max(0, min(MISS_LIMIT, int(spell_misses or 0))),
             spell_example_open=bool(spell_example_open),
         )
 
@@ -401,7 +403,7 @@ class Store:
                 max(0, min(2, int(record.spell_cooldown))),
                 1 if record.spell_mute else 0,
                 1 if record.spell_tray else 0,
-                max(0, min(10, int(record.spell_misses))),
+                max(0, min(MISS_LIMIT, int(record.spell_misses))),
                 1 if record.spell_example_open else 0,
             ),
         )

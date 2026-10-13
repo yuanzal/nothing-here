@@ -470,6 +470,19 @@ class App(QObject):
             self._render()
         self._persist()
 
+    def _on_spell_skip(self) -> None:
+        if self._spell.mode is not SpellMode.SPELLING or not self._spell.example_open:
+            return
+        self._spell = advance_spelling(
+            self._spell,
+            list(self._catalog),
+            self._progress,
+            slain=self._slain_seq(),
+        )
+        self._sync_daily_tray()
+        self._render()
+        self._persist()
+
     def _toggle_face(self) -> None:
         if self._burning or self._view is ViewState.HIDDEN or self._card is None:
             return
@@ -540,6 +553,7 @@ class App(QObject):
         card.invite_later.connect(self._on_invite_later)
         card.invite_mute.connect(self._on_invite_mute)
         card.spell_end.connect(self._on_spell_end)
+        card.spell_skip.connect(self._on_spell_skip)
         card.spell_submitted.connect(self._on_spell_submitted)
         card.set_layer_floating(self._floating)
         card.apply_palette(self._palette())
