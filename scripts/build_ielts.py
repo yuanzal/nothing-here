@@ -1,72 +1,22 @@
+"""Compatibility wrapper. Prefer scripts/build_ecdict.py."""
+
 from __future__ import annotations
 
-import argparse
-import csv
-import json
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_OUT = REPO_ROOT / "data" / "ielts.json"
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-
-def has_ielts_tag(tag: str) -> bool:
-    return "ielts" in tag.split()
-
-
-def convert(csv_path: Path, examples: dict[str, str] | None = None) -> list[dict[str, str]]:
-    kept = examples or {}
-    rows: list[dict[str, str]] = []
-    with csv_path.open(encoding="utf-8", newline="") as handle:
-        reader = csv.DictReader(handle)
-        for rec in reader:
-            if not has_ielts_tag(rec.get("tag") or ""):
-                continue
-            word = (rec.get("word") or "").strip()
-            if not word:
-                continue
-            rows.append(
-                {
-                    "word": word,
-                    "phonetic": rec.get("phonetic") or "",
-                    "translation": rec.get("translation") or "",
-                    "example": kept.get(word.casefold(), ""),
-                }
-            )
-    return rows
-
-
-def _saved_examples(path: Path) -> dict[str, str]:
-    if not path.is_file():
-        return {}
-    rows = json.loads(path.read_text(encoding="utf-8"))
-    saved: dict[str, str] = {}
-    for row in rows:
-        word = str(row.get("word") or "").strip().casefold()
-        example = str(row.get("example") or "").strip()
-        if word and example:
-            saved[word] = example
-    return saved
+from build_ecdict import main as build_main  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Build data/ielts.json from an ECDICT CSV.")
-    parser.add_argument("csv_path", type=Path, help="Path to ECDICT ecdict.csv")
-    parser.add_argument("-o", "--output", type=Path, default=DEFAULT_OUT)
-    args = parser.parse_args(argv)
-
-    if not args.csv_path.is_file():
-        print(f"CSV not found: {args.csv_path}", file=sys.stderr)
-        return 1
-
-    rows = convert(args.csv_path, _saved_examples(args.output))
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(
-        json.dumps(rows, ensure_ascii=False, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    print(f"wrote {len(rows)} IELTS entries to {args.output}")
-    return 0
+    args = list(argv if argv is not None else sys.argv[1:])
+    if args and args[0] not in ("-h", "--help") and "--tag" not in args and "--all" not in args:
+        csv = args[0]
+        rest = args[1:]
+        return build_main([csv, "--tag", "ielts", *rest])
+    return build_main(args)
 
 
 if __name__ == "__main__":

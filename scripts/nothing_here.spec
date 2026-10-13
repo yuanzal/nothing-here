@@ -8,6 +8,9 @@ root = Path(SPECPATH).resolve().parent
 
 datas = [
     (str(root / "data" / "ielts.json"), "data"),
+    (str(root / "data" / "cet4.json"), "data"),
+    (str(root / "data" / "cet6.json"), "data"),
+    (str(root / "data" / "ky.json"), "data"),
     (str(root / "src" / "nothing_here" / "ui" / "rose.svg"), str(Path("nothing_here") / "ui")),
 ]
 

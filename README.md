@@ -10,7 +10,7 @@ Nothing Here 并非一个全屏背单词 App，而是采用轻量化无感的卡
 
 | 能力 | 说明 |
 | --- | --- |
-| **背单词** | 雅思词库（可扩展 JSON 词库）、音标、释义、真实英文例句 |
+| **背单词** | 雅思 / 四级 / 六级 / 考研词库、音标、释义、真实英文例句 |
 | **每日目标** | 点击「不认识」收录单词，收满后按「今日目标 → 今日目标 → 熟词」轮换抽查记忆 |
 | **斩杀与回收站** | 以及熟练的单词可以斩杀，暂时移出抽卡池；可从托盘恢复 |
 | **正反面** | 正面背单词；展开译文、例句后选择认识/不认识；`Ctrl+Alt+S` 隐藏卡片 / 再显示 |
@@ -78,7 +78,7 @@ src/nothing_here/
   ui/              # 卡片、托盘
   desktop/         # Windows 桌面嵌入
   input/           # 全局热键
-data/ielts.json    # 雅思词条（含例句字段）
+data/*.json        # 词库（雅思 / 四级 / 六级 / 考研，含例句字段）
 scripts/           # 词库构建、例句填充（离线，非运行时爬网）
 ```
 
@@ -93,8 +93,8 @@ scripts/           # 词库构建、例句填充（离线，非运行时爬网�
 
 ## 词库与例句
 
-- 词条来自 ECDICT 导出的 [`data/ielts.json`](data/ielts.json)（带 `ielts` 标签）。
-- 例句在**构建词库时**写入 JSON：优先 [Tatoeba](https://tatoeba.org) 英文句库，缺的再用有道双语例句中的英文。**应用运行时不访问网络。**
+- 词条来自 ECDICT 按 tag 导出的 JSON：`ielts` / `cet4` / `cet6` / `ky`（见 `data/`）。重建：`python scripts/build_ecdict.py path/to/ecdict.csv --all`。
+- 例句在**构建词库时**写入 JSON：优先 [Tatoeba](https://tatoeba.org) 英文句库，缺的再用有道双语例句中的英文；与已有词库重叠的词会复用已有例句。**应用运行时不访问网络。**
 - 重新生成例句（需自行下载 Tatoeba 导出，见脚本说明）：
 
   ```powershell

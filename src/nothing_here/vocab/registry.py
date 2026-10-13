@@ -5,12 +5,12 @@ from nothing_here.paths import data_file
 from .json_source import JsonVocabSource
 from .protocol import Entry, VocabSource
 
-IELTS_JSON = data_file("ielts.json")
-
-
 def load_sources() -> list[VocabSource]:
     return [
-        JsonVocabSource("ielts", "雅思", IELTS_JSON),
+        JsonVocabSource("ielts", "雅思", data_file("ielts.json")),
+        JsonVocabSource("cet4", "四级", data_file("cet4.json")),
+        JsonVocabSource("cet6", "六级", data_file("cet6.json")),
+        JsonVocabSource("ky", "考研", data_file("ky.json")),
     ]
 
 
