@@ -30,8 +30,9 @@ FINISHED_TEXT = "厉害啦，没有更多单词了"
 INVITE_TEXT = "是否开始拼写测试？"
 BURN_MS = 400
 SINK_PX = 12
-CELL_SIZE = 22
-CELL_GAP = 4
+CELL_SIZE = 28
+CELL_GAP = 5
+SPELL_TRANSLATION_MAX_H = 52
 ROSE_SVG = ui_asset("rose.svg")
 
 
@@ -371,6 +372,7 @@ class CardWindow(QWidget):
         self._stats.show()
         self._reveal.setText("收起" if show_back else "译文")
         self._reveal.show()
+        self._translation.setMaximumHeight(16777215)
         self._translation.setText(translation)
         self._translation.setVisible(show_back)
         sentence = example.strip()
@@ -384,6 +386,7 @@ class CardWindow(QWidget):
     def show_finished(self) -> None:
         self._scroll_offset = 0
         self._hide_special_modes()
+        self._translation.setMaximumHeight(16777215)
         self._done.show()
         self._word.hide()
         self._phonetic.hide()
@@ -399,6 +402,7 @@ class CardWindow(QWidget):
     def show_invite(self) -> None:
         self._scroll_offset = 0
         self._hide_special_modes()
+        self._translation.setMaximumHeight(16777215)
         self._done.hide()
         self._word.hide()
         self._phonetic.hide()
@@ -437,7 +441,9 @@ class CardWindow(QWidget):
         self._invite_row.hide()
         self._stats.hide()
         self._button_row.hide()
-        self._translation.setText(translation)
+        # 释义过长会把格子顶出卡片可见区；拼写态限制高度，保证输入格始终在窗口内。
+        self._translation.setMaximumHeight(SPELL_TRANSLATION_MAX_H)
+        self._translation.setText(_spell_prompt(translation))
         self._translation.show()
         self._phonetic.setText(phonetic)
         self._phonetic.setVisible(bool(phonetic))
@@ -453,6 +459,12 @@ class CardWindow(QWidget):
         self._example.setVisible(example_open and bool(sentence))
         self._spell_end.show()
         self._layer.show()
+        self._spell_grid.updateGeometry()
+        layout = self._body.layout()
+        layout.invalidate()
+        layout.activate()
+        # 先按内容拉高窗口再摆 body，避免格子高度未计入时按钮叠上来。
+        self.resize(self.width() or CARD_WIDTH, self.preferred_height())
         self._position_body()
         self.update()
         self._spell_keys.start()
@@ -638,19 +650,66 @@ class _SpellGrid(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setCursor(Qt.CursorShape.IBeamCursor)
+        # Fixed 高度：避免透明层不裁剪子控件时，格子画进下方按钮区域。
+        self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
         self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(0, 4, 0, 4)
-        self._layout.setSpacing(6)
+        self._layout.setContentsMargins(0, 8, 0, 10)
+        self._layout.setSpacing(8)
         self._cells: tuple[SpellCell, ...] = ()
         self._labels: list[QLabel] = []
         self._values: list[str] = []
         self._cursor = 0
         self._ink = "#1C1C1C"
-        self._border = "rgba(28, 28, 28, 120)"
+        self._border = "rgba(28, 28, 28, 160)"
+        self._fill = "rgba(255, 255, 255, 210)"
+        self._fill_active = "rgba(255, 255, 255, 235)"
+
+    def sizeHint(self) -> QSize:
+        return QSize(CARD_WIDTH - 2 * PADDING, self._needed_height())
+
+    def minimumSizeHint(self) -> QSize:
+        return self.sizeHint()
+
+    def hasHeightForWidth(self) -> bool:  # noqa: N802
+        return True
+
+    def heightForWidth(self, width: int) -> int:  # noqa: N802
+        return self._needed_height(width)
+
+    def _row_count(self, width: int | None = None) -> int:
+        if not self._cells:
+            return 0
+        max_width = (width if width and width > 0 else CARD_WIDTH - 2 * PADDING)
+        used = 0
+        rows = 0
+        for _cell in self._cells:
+            need = CELL_SIZE + CELL_GAP
+            if rows == 0 or used + need > max_width:
+                rows += 1
+                used = need
+            else:
+                used += need
+        return rows
+
+    def _needed_height(self, width: int | None = None) -> int:
+        rows = self._row_count(width)
+        if rows <= 0:
+            return 0
+        margins = self._layout.contentsMargins()
+        spacing = self._layout.spacing()
+        return margins.top() + margins.bottom() + rows * CELL_SIZE + (rows - 1) * spacing
 
     def apply_palette(self, palette: CardPalette, fade: float) -> None:
         self._ink = _hex_rgba(palette.word, fade)
-        self._border = _tuple_rgba(palette.known_bg, fade, boost=40)
+        self._border = _tuple_rgba(palette.known_bg, fade, boost=80)
+        # 半透明实底，避免壁纸把字母「吃掉」；深色风格用深底。
+        if palette.word.upper() in ("#F5F5F5", "#FFFFFF"):
+            self._fill = _tuple_rgba((20, 20, 20, 200), fade)
+            self._fill_active = _tuple_rgba((40, 40, 40, 230), fade)
+            self._border = _tuple_rgba((255, 255, 255, 100), fade)
+        else:
+            self._fill = _tuple_rgba((255, 255, 255, 210), fade)
+            self._fill_active = _tuple_rgba((255, 255, 255, 240), fade)
         self._refresh_labels()
 
     def set_word(self, word: str, filled: str | None = None) -> None:
@@ -714,10 +773,10 @@ class _SpellGrid(QWidget):
             item = self._layout.takeAt(0)
             row = item.widget()
             if row is not None:
+                row.setParent(None)
                 row.deleteLater()
         self._labels = []
         row_layout: QHBoxLayout | None = None
-        row_widget: QWidget | None = None
         used = 0
         max_width = CARD_WIDTH - 2 * PADDING
         letter_i = 0
@@ -735,16 +794,20 @@ class _SpellGrid(QWidget):
             label = QLabel()
             label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             label.setFixedSize(CELL_SIZE, CELL_SIZE)
-            label.setFont(_px_font("Segoe UI", 14, bold=True))
+            label.setFont(_px_font("Segoe UI", 16, bold=True))
             if cell.fixed:
                 label.setText(cell.text if cell.text != " " else "·")
             else:
-                label.setText(self._values[letter_i])
+                label.setText(self._values[letter_i].upper() if self._values[letter_i] else "")
                 letter_i += 1
             self._labels.append(label)
             assert row_layout is not None
             row_layout.insertWidget(row_layout.count() - 1, label)
             used += need
+        height = self._needed_height()
+        self.setFixedHeight(height)
+        self._layout.activate()
+        self.updateGeometry()
         self._refresh_labels()
 
     def _refresh_labels(self) -> None:
@@ -763,12 +826,29 @@ class _SpellGrid(QWidget):
                 value = self._values[letter_i] if letter_i < len(self._values) else ""
                 label.setText(value.upper() if value else "")
                 active = letter_i == self._cursor
-                border = self._border if not active else self._ink
+                border = self._ink if active else self._border
+                fill = self._fill_active if active else self._fill
                 label.setStyleSheet(
-                    f"color: {self._ink}; background: transparent;"
-                    f"border: 1px solid {border}; border-radius: 4px;"
+                    f"color: {self._ink}; background: {fill};"
+                    f"border: 2px solid {border}; border-radius: 5px;"
                 )
                 letter_i += 1
+
+
+def _spell_prompt(translation: str) -> str:
+    """拼写提示只留前几行，避免 ECDICT 长释义把格子顶出可视区。"""
+    text = translation.replace("\\n", "\n").strip()
+    if not text:
+        return ""
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    if not lines:
+        return text
+    joined = "\n".join(lines[:2])
+    if len(joined) > 64:
+        return joined[:64].rstrip() + "…"
+    if len(lines) > 2:
+        return joined + "…"
+    return joined
 
 
 def _scaled(alpha: int, fade: float) -> int:
