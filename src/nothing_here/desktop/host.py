@@ -82,6 +82,19 @@ def _user32() -> ctypes.WinDLL:
         ctypes.c_int,
         wintypes.UINT,
     ]
+    dll.GetForegroundWindow.restype = wintypes.HWND
+    dll.GetForegroundWindow.argtypes = []
+    dll.SetForegroundWindow.restype = wintypes.BOOL
+    dll.SetForegroundWindow.argtypes = [wintypes.HWND]
+    dll.SetFocus.restype = wintypes.HWND
+    dll.SetFocus.argtypes = [wintypes.HWND]
+    dll.GetWindowThreadProcessId.restype = wintypes.DWORD
+    dll.GetWindowThreadProcessId.argtypes = [
+        wintypes.HWND,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    dll.AttachThreadInput.restype = wintypes.BOOL
+    dll.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
     return dll
 
 
@@ -136,6 +149,25 @@ class DesktopHost:
         if ex & WS_EX_TRANSPARENT:
             self._user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex & ~WS_EX_TRANSPARENT)
             self._stack(hwnd, self._insert_after())
+
+    def focus_widget(self, widget: QWidget) -> None:
+        """Try to give a desktop-embedded card real keyboard focus (WorkerW normally steals it)."""
+        hwnd = wintypes.HWND(int(widget.winId()))
+        foreground = self._user32.GetForegroundWindow()
+        if foreground == hwnd:
+            self._user32.SetFocus(hwnd)
+            return
+        pid = wintypes.DWORD()
+        tid_fore = self._user32.GetWindowThreadProcessId(foreground, ctypes.byref(pid))
+        tid_self = self._user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if tid_fore and tid_self and tid_fore != tid_self:
+            self._user32.AttachThreadInput(tid_fore, tid_self, True)
+            self._user32.SetForegroundWindow(hwnd)
+            self._user32.SetFocus(hwnd)
+            self._user32.AttachThreadInput(tid_fore, tid_self, False)
+        else:
+            self._user32.SetForegroundWindow(hwnd)
+            self._user32.SetFocus(hwnd)
 
     def place(
         self,

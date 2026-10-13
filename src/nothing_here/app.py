@@ -576,6 +576,7 @@ class App(QObject):
                     entry.translation,
                     example,
                     self._spell.example_open,
+                    floating=self._floating,
                 )
         else:
             word = self._plan.current
@@ -644,6 +645,7 @@ class App(QObject):
         if self._card is None:
             return
         self._card.cancel_burn()
+        self._card.release_spell_input()
         self._card.hide()
         self._card.close()
         self._card.deleteLater()

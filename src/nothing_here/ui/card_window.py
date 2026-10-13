@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
+
 from PyQt6.QtCore import QElapsedTimer, QPoint, QPointF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QIcon, QImage, QMouseEvent, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
@@ -16,6 +17,7 @@ from PyQt6.QtWidgets import (
 
 from nothing_here.domain.spell import SpellCell, cells_for
 from nothing_here.domain.weight import accuracy_percent
+from nothing_here.input.spell_keys import SpellKeyHook
 from nothing_here.paths import ui_asset
 from nothing_here.ui.style import LIGHT, CardPalette
 
@@ -95,7 +97,7 @@ class _Body(QWidget):
         if target is None:
             return False
         if isinstance(target, _SpellGrid):
-            target.setFocus(Qt.FocusReason.MouseFocusReason)
+            # 桌面嵌入不接焦点；点格子只是提示用户「可以打字了」，键由 pynput 收。
             event.accept()
             return True
         if isinstance(target, QPushButton) and not target.isEnabled():
@@ -148,8 +150,10 @@ class CardWindow(QWidget):
         self._sink = 0
         self._burning = False
         self._burn_pending = False
-        self._accept_focus = False
         self._spell_word = ""
+        self._spell_keys = SpellKeyHook(self)
+        self._spell_keys.letter.connect(self._on_spell_letter)
+        self._spell_keys.backspace.connect(self._on_spell_backspace)
         self._burn_clock = QElapsedTimer()
         self._burn_timer = QTimer(self)
         self._burn_timer.setInterval(16)
@@ -296,20 +300,17 @@ class CardWindow(QWidget):
         flags = (
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.Tool
+            | Qt.WindowType.WindowDoesNotAcceptFocus
             | Qt.WindowType.NoDropShadowWindowHint
         )
-        if not self._accept_focus:
-            flags |= Qt.WindowType.WindowDoesNotAcceptFocus
         if floating:
             flags |= Qt.WindowType.WindowStaysOnTopHint
         self.setWindowFlags(flags)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, not self._accept_focus)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
         self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
-        self.setFocusPolicy(
-            Qt.FocusPolicy.ClickFocus if self._accept_focus else Qt.FocusPolicy.NoFocus
-        )
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
 
     def apply_palette(self, palette: CardPalette) -> None:
         self._palette = palette
@@ -359,7 +360,6 @@ class CardWindow(QWidget):
     ) -> None:
         self._face = face
         self._scroll_offset = 0
-        self._accept_focus = False
         self._hide_special_modes()
         show_back = face is Face.BACK
         self._done.hide()
@@ -383,7 +383,6 @@ class CardWindow(QWidget):
 
     def show_finished(self) -> None:
         self._scroll_offset = 0
-        self._accept_focus = False
         self._hide_special_modes()
         self._done.show()
         self._word.hide()
@@ -399,7 +398,7 @@ class CardWindow(QWidget):
 
     def show_invite(self) -> None:
         self._scroll_offset = 0
-        self._accept_focus = False
+        self._hide_special_modes()
         self._done.hide()
         self._word.hide()
         self._phonetic.hide()
@@ -424,22 +423,29 @@ class CardWindow(QWidget):
         example: str = "",
         example_open: bool = False,
         filled: str | None = None,
+        *,
+        floating: bool = False,
     ) -> None:
+        del floating
         self._scroll_offset = 0
-        self._accept_focus = True
+        keep = filled
+        if keep is None and self._spell_word == word and self._spell_grid.isVisible():
+            keep = self._spell_grid.typed_letters()
         self._spell_word = word
         self._done.hide()
         self._invite.hide()
         self._invite_row.hide()
-        self._word.hide()
         self._stats.hide()
         self._button_row.hide()
         self._translation.setText(translation)
         self._translation.show()
         self._phonetic.setText(phonetic)
         self._phonetic.setVisible(bool(phonetic))
+        # 点「译文」后露出英文答案；未打开时仍隐藏单词。
+        self._word.setText(word)
+        self._word.setVisible(example_open)
         self._spell_grid.show()
-        self._spell_grid.set_word(word, filled)
+        self._spell_grid.set_word(word, keep)
         self._reveal.setText("收起" if example_open else "译文")
         self._reveal.show()
         sentence = example.strip()
@@ -449,15 +455,26 @@ class CardWindow(QWidget):
         self._layer.show()
         self._position_body()
         self.update()
-        self._spell_grid.grabKeyboard()
-        self._spell_grid.setFocus(Qt.FocusReason.OtherFocusReason)
+        self._spell_keys.start()
 
     def clear_spell_letters(self) -> None:
         if self._spell_word:
             self._spell_grid.set_word(self._spell_word, None)
 
+    def release_spell_input(self) -> None:
+        """隐藏 / 销毁前必须调用，避免 grab/hook 残留导致闪退。"""
+        self._spell_keys.stop()
+
+    def _on_spell_letter(self, char: str) -> None:
+        if self._spell_grid.isVisible():
+            self._spell_grid.accept_key(Qt.Key.Key_A, char)
+
+    def _on_spell_backspace(self) -> None:
+        if self._spell_grid.isVisible():
+            self._spell_grid.accept_key(Qt.Key.Key_Backspace, "")
+
     def _hide_special_modes(self) -> None:
-        self._spell_grid.releaseKeyboard()
+        self.release_spell_input()
         self._invite.hide()
         self._invite_row.hide()
         self._spell_grid.hide()
@@ -651,16 +668,25 @@ class _SpellGrid(QWidget):
         self._cursor = next((i for i, value in enumerate(self._values) if not value), len(self._values))
         self._rebuild()
 
+    def typed_letters(self) -> str:
+        return "".join(self._values)
+
     def keyPressEvent(self, event) -> None:  # noqa: N802
-        key = event.key()
-        text = event.text()
+        if self._handle_key(event.key(), event.text()):
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+    def accept_key(self, key: int, text: str) -> bool:
+        return self._handle_key(key, text)
+
+    def _handle_key(self, key: int, text: str) -> bool:
         if key in (Qt.Key.Key_Backspace, Qt.Key.Key_Delete):
             if self._cursor > 0:
                 self._cursor -= 1
                 self._values[self._cursor] = ""
                 self._refresh_labels()
-            event.accept()
-            return
+            return True
         if len(text) == 1 and text.isalpha():
             if self._cursor < len(self._values):
                 self._values[self._cursor] = text
@@ -668,9 +694,8 @@ class _SpellGrid(QWidget):
                 self._refresh_labels()
                 if self._cursor >= len(self._values) and all(self._values):
                     self.submitted.emit(self._assembled())
-            event.accept()
-            return
-        super().keyPressEvent(event)
+            return True
+        return False
 
     def _assembled(self) -> str:
         letters = list(self._values)
