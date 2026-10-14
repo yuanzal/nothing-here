@@ -5,13 +5,15 @@ import sys
 from dataclasses import replace
 from datetime import date
 from enum import Enum
+from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QFileDialog
 
 from nothing_here.desktop.host import DesktopHost
+from nothing_here.domain.read import chapter_starts, decode_book_bytes, turn_chapter, turn_page
 from nothing_here.domain.daily import (
     DailyPlan,
     grade,
@@ -42,6 +44,7 @@ from nothing_here.domain.spell import (
 from nothing_here.input.hotkey import HotkeyListener
 from nothing_here.storage.db import AppState, DailyRecord, Store
 from nothing_here.ui.card_window import CardWindow, Face
+from nothing_here.ui.read_window import READ_CARD_SIZE, READ_FONT_PX, READ_LEADING, ReadWindow
 from nothing_here.ui.style import palette_for
 from nothing_here.ui.tray import Tray
 from nothing_here.vocab.examples import EntryExampleSource, load_example_sources, resolve_example
@@ -103,10 +106,25 @@ class App(QObject):
         self._fill_color = persisted.fill_color
         self._fill_alpha = persisted.fill_alpha
         self._button_preset = persisted.button_preset
-        self._surface_id = "word"
+        self._surface_id = persisted.surface_id if persisted.surface_id in ("word", "read") else "word"
+        self._read_origin = persisted.read_origin
+        self._read_card = persisted.read_card
+        self._read_font = persisted.read_font
+        self._read_leading = persisted.read_leading
+        self._books = self._store.list_books()
+        known_books = {book.book_id for book in self._books}
+        self._current_book = persisted.current_book if persisted.current_book in known_books else None
+        if self._current_book is None and self._books:
+            self._current_book = self._books[0].book_id
+        self._book_text = ""
+        self._offset = 0
+        self._chapters: tuple[int, ...] = (0,)
+        self._page_starts: tuple[int, ...] = (0,)
+        if self._current_book:
+            self._load_open_book(self._current_book)
         self._view = ViewState.HIDDEN
         self._face = Face.FRONT
-        self._card: Optional[CardWindow] = None
+        self._card: Optional[CardWindow | ReadWindow] = None
         self._pending_plan: Optional[DailyPlan] = None
         self._burning = False
         self._host = DesktopHost()
@@ -124,6 +142,12 @@ class App(QObject):
             self._fill_color,
             self._fill_alpha,
             spell_tray=self._spell.tray_unlocked,
+            surface_id=self._surface_id,
+            books=[(book.book_id, book.title) for book in self._books],
+            current_book=self._current_book,
+            read_card=self._read_card,
+            read_font=self._read_font,
+            read_leading=self._read_leading,
         )
         self._tray.show_cards.connect(self.show_cards)
         self._tray.hide_cards.connect(self.hide_cards)
@@ -136,6 +160,12 @@ class App(QObject):
         self._tray.style_custom_chosen.connect(self.choose_custom_style)
         self._tray.surface_chosen.connect(self.choose_surface)
         self._tray.spell_start_chosen.connect(self.start_spell_from_tray)
+        self._tray.book_chosen.connect(self.choose_book)
+        self._tray.book_import_chosen.connect(self.import_book)
+        self._tray.book_remove_chosen.connect(self.remove_current_book)
+        self._tray.read_card_chosen.connect(self.choose_read_card)
+        self._tray.read_font_chosen.connect(self.choose_read_font)
+        self._tray.read_leading_chosen.connect(self.choose_read_leading)
         self.visibility_hotkey_pressed.connect(self.toggle_visibility)
         self._hotkey = HotkeyListener(self.visibility_hotkey_pressed.emit)
         self._hotkey.start()
@@ -196,7 +226,7 @@ class App(QObject):
         self._persist()
 
     def change_goal(self, goal: int) -> None:
-        if self._burning:
+        if self._burning or self._surface_id != "word":
             return
         self._check_day()
         previous = self._plan
@@ -277,7 +307,7 @@ class App(QObject):
         self.hide_cards()
 
     def switch_source(self, source_id: str) -> None:
-        if self._burning or source_id not in self._source_by_id:
+        if self._burning or self._surface_id != "word" or source_id not in self._source_by_id:
             return
         self._check_day()
         visible = self._view is ViewState.VISIBLE
@@ -306,7 +336,7 @@ class App(QObject):
         self._persist()
 
     def start_spell_from_tray(self) -> None:
-        if self._burning:
+        if self._burning or self._surface_id != "word":
             return
         self._check_day()
         previous = self._spell
@@ -327,7 +357,7 @@ class App(QObject):
         self._persist()
 
     def restore_word(self, word: str) -> None:
-        if self._burning:
+        if self._burning or self._surface_id != "word":
             return
         key = word.casefold()
         if key not in self._slain:
@@ -381,9 +411,98 @@ class App(QObject):
         self._persist()
 
     def choose_surface(self, surface_id: str) -> None:
-        del surface_id
-        self._surface_id = "word"
-        self._tray.set_surface("word")
+        if surface_id not in ("word", "read"):
+            self._tray.set_surface(self._surface_id)
+            return
+        if surface_id == self._surface_id:
+            self._tray.set_surface(self._surface_id)
+            return
+        if self._surface_id == "word":
+            self._take_pending_slay()
+            if self._spell.mode is SpellMode.INVITE:
+                self._spell = dismiss_invite_on_hide(self._spell)
+            if self._spell.mode is not SpellMode.SPELLING:
+                self._face = Face.FRONT
+        self._surface_id = surface_id
+        self._tray.set_surface(surface_id)
+        if self._view is ViewState.VISIBLE:
+            if not self._open_card(self._face):
+                self._notify_embed_failed()
+                self._view = ViewState.HIDDEN
+        self._persist()
+
+    def choose_book(self, book_id: str) -> None:
+        self._books = self._store.list_books()
+        if book_id not in {book.book_id for book in self._books}:
+            self._sync_book_tray()
+            return
+        if book_id == self._current_book:
+            self._sync_book_tray()
+            return
+        self._current_book = book_id
+        self._load_open_book(book_id)
+        self._sync_book_tray()
+        if self._view is ViewState.VISIBLE and self._surface_id == "read":
+            self._render_read()
+        self._persist()
+
+    def import_book(self) -> None:
+        path, _selected = QFileDialog.getOpenFileName(None, "导入", "", "文本 (*.txt)")
+        if not path:
+            return
+        source = Path(path)
+        if source.suffix.lower() != ".txt":
+            self._tray.show_import_failed("导入失败：只能导入 .txt 文件。")
+            return
+        try:
+            data = source.read_bytes()
+        except OSError:
+            self._tray.show_import_failed("导入失败：读不到这个文件。")
+            return
+        text = decode_book_bytes(data)
+        if text is None:
+            self._tray.show_import_failed(
+                "导入失败：文件无法按 UTF-8 或 GB18030 读取，或去掉空白后没有内容。"
+            )
+            return
+        record = self._store.add_book(source.stem or "未命名", text)
+        self._books = self._store.list_books()
+        self._current_book = record.book_id
+        self._load_open_book(record.book_id)
+        self._sync_book_tray()
+        if self._view is ViewState.VISIBLE and self._surface_id == "read":
+            self._render_read()
+        self._persist()
+
+    def remove_current_book(self) -> None:
+        if not self._current_book:
+            return
+        removed = self._current_book
+        nxt = _book_after([book.book_id for book in self._books], removed)
+        self._store.remove_book(removed)
+        self._books = self._store.list_books()
+        ids = {book.book_id for book in self._books}
+        self._current_book = nxt if nxt in ids else (self._books[0].book_id if self._books else None)
+        if self._current_book:
+            self._load_open_book(self._current_book)
+        else:
+            self._book_text = ""
+            self._offset = 0
+            self._chapters = (0,)
+            self._page_starts = (0,)
+        self._sync_book_tray()
+        if self._view is ViewState.VISIBLE and self._surface_id == "read":
+            self._render_read()
+        self._persist()
+
+    def choose_read_card(self, size: str) -> None:
+        self._choose_read_level("card", size)
+
+    def choose_read_font(self, size: str) -> None:
+        self._choose_read_level("font", size)
+
+    def choose_read_leading(self, leading: str) -> None:
+        self._choose_read_level("leading", leading)
 
     def quit(self) -> None:
         self._take_pending_slay()
@@ -465,7 +584,7 @@ class App(QObject):
             self._persist()
             return
         self._spell = register_miss(self._spell)
-        if self._card is not None:
+        if isinstance(self._card, CardWindow):
             self._card.clear_spell_letters()
             self._render()
         self._persist()
@@ -506,7 +625,7 @@ class App(QObject):
             or self._face is not Face.BACK
         ):
             return
-        if self._card is None or self._plan.current is None:
+        if not isinstance(self._card, CardWindow) or self._plan.current is None:
             return
         if self._plan.current not in self._catalog:
             return
@@ -532,12 +651,14 @@ class App(QObject):
             self._spell = after_plan_change(self._spell, before, pending, self._progress)
         self._face = Face.FRONT
         self._sync_daily_tray()
-        if self._view is ViewState.VISIBLE and self._card is not None:
+        if self._view is ViewState.VISIBLE and isinstance(self._card, CardWindow):
             self._render()
             self._card.finish_burn()
         self._persist()
 
     def _open_card(self, face: Face) -> bool:
+        if self._surface_id == "read":
+            return self._open_read_card()
         self._destroy_windows()
         self._face = face
         card = CardWindow()
@@ -569,7 +690,10 @@ class App(QObject):
         return True
 
     def _render(self) -> None:
-        if self._card is None:
+        if self._surface_id == "read":
+            self._render_read()
+            return
+        if not isinstance(self._card, CardWindow):
             return
         self._card.apply_palette(self._palette())
         self._card.set_layer_floating(self._floating)
@@ -619,7 +743,11 @@ class App(QObject):
     def _move_card(self, x: int, y: int, persist: bool) -> None:
         if self._card is None or self._burning:
             return
-        self._origin = self._host.move(self._card, x, y)
+        origin = self._host.move(self._card, x, y)
+        if self._surface_id == "read":
+            self._read_origin = origin
+        else:
+            self._origin = origin
         if persist:
             self._persist()
 
@@ -638,6 +766,11 @@ class App(QObject):
                 fill_alpha=self._fill_alpha,
                 surface_id=self._surface_id,
                 button_preset=self._button_preset,
+                read_origin=self._read_origin,
+                read_card=self._read_card,
+                read_font=self._read_font,
+                read_leading=self._read_leading,
+                current_book=self._current_book,
             )
         )
         self._store.save_daily(
@@ -658,15 +791,16 @@ class App(QObject):
     def _destroy_windows(self) -> None:
         if self._card is None:
             return
-        self._card.cancel_burn()
-        self._card.release_spell_input()
+        if isinstance(self._card, CardWindow):
+            self._card.cancel_burn()
+            self._card.release_spell_input()
         self._card.hide()
         self._card.close()
         self._card.deleteLater()
         self._card = None
 
     def _take_pending_slay(self) -> None:
-        if self._card is not None:
+        if isinstance(self._card, CardWindow):
             self._card.cancel_burn()
         if self._pending_plan is not None:
             self._plan = self._pending_plan
@@ -731,6 +865,111 @@ class App(QObject):
         self._destroy_windows()
         self._store.close()
 
+    def _open_read_card(self) -> bool:
+        self._destroy_windows()
+        card = ReadWindow()
+        card.prev_page.connect(lambda: self._turn_read("page", -1))
+        card.next_page.connect(lambda: self._turn_read("page", 1))
+        card.prev_chapter.connect(lambda: self._turn_read("chapter", -1))
+        card.next_chapter.connect(lambda: self._turn_read("chapter", 1))
+        card.moved.connect(lambda x, y: self._move_card(x, y, persist=False))
+        card.move_finished.connect(lambda x, y: self._move_card(x, y, persist=True))
+        card.layer_requested.connect(self._request_layer_toggle)
+        card.set_layer_floating(self._floating)
+        card.apply_palette(self._palette())
+        card.apply_layer(self._floating)
+        card.winId()
+        if not self._host.prepare(card, self._floating):
+            card.close()
+            card.deleteLater()
+            return False
+        card.show()
+        self._card = card
+        self._render_read()
+        return True
+
+    def _render_read(self) -> None:
+        if not isinstance(self._card, ReadWindow):
+            return
+        card = self._card
+        card.apply_palette(self._palette())
+        card.set_layer_floating(self._floating)
+        work = self._host.work_rect()
+        preset_w, preset_h = READ_CARD_SIZE.get(self._read_card, READ_CARD_SIZE["medium"])
+        card.set_box(min(preset_w, max(1, work.width())), min(preset_h, max(1, work.height())))
+        placed = self._host.place([card], card.preferred_height(), [self._read_origin])
+        if self._read_origin is not None and placed:
+            self._read_origin = placed[0]
+        self._host.set_click_through(card, False)
+        pixel = READ_FONT_PX.get(self._read_font, 16)
+        ratio = READ_LEADING.get(self._read_leading, 1.5)
+        if not self._current_book:
+            self._page_starts = (0,)
+            card.show_empty(pixel, ratio)
+            return
+        self._page_starts = card.measure_pages(self._book_text, pixel, ratio)
+        if self._book_text:
+            self._offset = max(0, min(self._offset, len(self._book_text)))
+        card.show_page(self._book_text, self._page_starts, self._offset, pixel, ratio)
+
+    def _turn_read(self, kind: str, step: int) -> None:
+        if not isinstance(self._card, ReadWindow) or not self._current_book:
+            return
+        if kind == "chapter":
+            new_offset = turn_chapter(self._chapters, self._page_starts, self._offset, step)
+        else:
+            new_offset = turn_page(self._page_starts, self._offset, step)
+        if new_offset == self._offset:
+            return
+        self._offset = max(0, min(new_offset, len(self._book_text)))
+        self._store.set_book_offset(self._current_book, self._offset)
+        pixel = READ_FONT_PX.get(self._read_font, 16)
+        ratio = READ_LEADING.get(self._read_leading, 1.5)
+        self._card.show_page(self._book_text, self._page_starts, self._offset, pixel, ratio)
+
+    def _choose_read_level(self, kind: str, value: str) -> None:
+        allowed = {
+            "card": READ_CARD_SIZE,
+            "font": READ_FONT_PX,
+            "leading": READ_LEADING,
+        }[kind]
+        current = {"card": self._read_card, "font": self._read_font, "leading": self._read_leading}[kind]
+        if value not in allowed:
+            self._tray.set_read_levels(self._read_card, self._read_font, self._read_leading)
+            return
+        if value == current:
+            return
+        if kind == "card":
+            self._read_card = value
+        elif kind == "font":
+            self._read_font = value
+        else:
+            self._read_leading = value
+        self._tray.set_read_levels(self._read_card, self._read_font, self._read_leading)
+        if self._view is ViewState.VISIBLE and self._surface_id == "read":
+            self._render_read()
+        self._persist()
+
+    def _load_open_book(self, book_id: str) -> None:
+        text = self._store.read_book_text(book_id)
+        stored = 0
+        for book in self._books:
+            if book.book_id == book_id:
+                stored = book.offset
+                break
+        offset = max(0, min(stored, len(text))) if text else 0
+        self._book_text = text
+        self._offset = offset
+        self._chapters = chapter_starts(text) if text else (0,)
+        if offset != stored:
+            self._store.set_book_offset(book_id, offset)
+
+    def _sync_book_tray(self) -> None:
+        self._tray.set_books(
+            [(book.book_id, book.title) for book in self._books],
+            self._current_book,
+        )
+
     def _bind_examples(self) -> None:
         source = self._example_sources[0]
         if isinstance(source, EntryExampleSource):
@@ -780,6 +1019,18 @@ def _spell_from_store(store: Store, persisted: AppState, today: str) -> SpellSta
 
 def _today() -> str:
     return date.today().isoformat()
+
+
+def _book_after(ids: list[str], removed: str) -> Optional[str]:
+    if removed not in ids:
+        return None
+    index = ids.index(removed)
+    for candidate in ids[index + 1 :]:
+        return candidate
+    for candidate in ids:
+        if candidate != removed:
+            return candidate
+    return None
 
 
 def _pick_source(sources: list[VocabSource], wanted: str) -> str:

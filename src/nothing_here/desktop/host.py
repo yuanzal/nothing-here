@@ -28,6 +28,14 @@ def _as_hwnd(value: int) -> wintypes.HWND:
     return wintypes.HWND(value & 0xFFFFFFFFFFFFFFFF)
 
 
+def _preferred_width(widget: QWidget, work_width: int) -> int:
+    fn = getattr(widget, "preferred_width", None)
+    width = fn() if callable(fn) else widget.width()
+    if not width or width <= 0:
+        width = CARD_WIDTH
+    return max(1, min(int(width), max(1, work_width)))
+
+
 def clamp_origin(
     x: int,
     y: int,
@@ -187,7 +195,8 @@ class DesktopHost:
                 reserved = remaining * (min_front_height + CARD_GAP)
                 max_height = work.top() + work.height() - y - reserved
                 height = max(1, min(preferred, max_height))
-                x = work.left() + work.width() - MARGIN_RIGHT - CARD_WIDTH
+                width = _preferred_width(widget, work.width())
+                x = work.left() + work.width() - MARGIN_RIGHT - width
                 origin = (x, y)
                 y += height + CARD_GAP
             else:
@@ -201,11 +210,12 @@ class DesktopHost:
     def move(self, widget: QWidget, x: int, y: int, height: Optional[int] = None) -> tuple[int, int]:
         work = self.work_rect()
         preferred = widget.preferred_height()  # type: ignore[attr-defined]
+        width = _preferred_width(widget, work.width())
         if height is None:
             height = min(preferred, work.height())
         height = max(1, min(preferred, height, work.height()))
-        x, y = clamp_origin(x, y, CARD_WIDTH, height, work.left(), work.top(), work.width(), work.height())
-        self._commit_geometry(widget, x, y, CARD_WIDTH, height)
+        x, y = clamp_origin(x, y, width, height, work.left(), work.top(), work.width(), work.height())
+        self._commit_geometry(widget, x, y, width, height)
         widget.set_screen_origin(x, y)  # type: ignore[attr-defined]
         return (x, y)
 

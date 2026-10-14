@@ -10,7 +10,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
-from nothing_here.ui.card_window import CardWindow, Face
+from nothing_here.ui.card_window import ROSE_SVG, CardWindow, Face
 
 _APP = QApplication.instance() or QApplication(sys.argv)
 
@@ -86,6 +86,16 @@ class CardLayerTests(unittest.TestCase):
         self.assertTrue(card._rose.isVisible())
         self.assertEqual(card._rose.text(), "")
         self.assertEqual(card._rose.toolTip(), "斩杀")
+        self.assertTrue(ROSE_SVG.is_file(), str(ROSE_SVG))
+        image = card._rose.icon().pixmap(22, 22).toImage()
+        self.assertFalse(image.isNull())
+        self.assertTrue(
+            any(
+                image.pixelColor(x, y).alpha() > 0
+                for y in range(image.height())
+                for x in range(image.width())
+            )
+        )
         card.set_content("word", "", "词", 1, 2, Face.BACK, "   ")
         self.assertFalse(card._example.isVisible())
         self.assertFalse(card._phonetic.isVisible())

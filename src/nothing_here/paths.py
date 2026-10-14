@@ -21,4 +21,8 @@ def data_file(name: str) -> Path:
 
 
 def ui_asset(name: str) -> Path:
-    return bundle_root() / "nothing_here" / "ui" / name
+    # Frozen builds extract rose.svg to nothing_here/ui (see scripts/nothing_here.spec).
+    # In a source checkout the file sits next to this package, under src/.
+    if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
+        return Path(sys._MEIPASS) / "nothing_here" / "ui" / name
+    return Path(__file__).resolve().parent / "ui" / name

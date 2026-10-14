@@ -213,7 +213,7 @@ class CardWindow(QWidget):
         self._rose.setCursor(Qt.CursorShape.PointingHandCursor)
         self._rose.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._rose.setFixedSize(36, 36)
-        self._rose.setIconSize(QSize(22, 22))
+        self._rose.setIconSize(QSize(26, 26))
         self._rose.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self._known.setCursor(Qt.CursorShape.PointingHandCursor)
         self._unknown.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -526,6 +526,9 @@ class CardWindow(QWidget):
         self._paint_palette()
         self._position_body()
         self.update()
+
+    def preferred_width(self) -> int:
+        return CARD_WIDTH
 
     def preferred_height(self) -> int:
         return max(self._content_height(), 72)
@@ -920,7 +923,7 @@ def _rose_style() -> str:
 
 
 def _rose_icon(color: QColor) -> QIcon:
-    size = 22
+    size = 26
     image = QImage(size, size, QImage.Format.Format_ARGB32_Premultiplied)
     image.fill(Qt.GlobalColor.transparent)
     renderer = QSvgRenderer(str(ROSE_SVG))

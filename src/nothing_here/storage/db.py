@@ -3,10 +3,12 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from nothing_here.domain.read import disambiguate_title
 from nothing_here.domain.spell import MISS_LIMIT
 
 
@@ -34,6 +36,20 @@ class AppState:
     surface_id: str = "word"
     # 自定义时按钮底色仍跟最近一次浅色或黑底走。没选过黑底则为 light。
     button_preset: str = "light"
+    read_origin: Optional[tuple[int, int]] = None
+    read_card: str = "medium"
+    read_font: str = "medium"
+    read_leading: str = "medium"
+    current_book: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class BookRecord:
+    book_id: str
+    title: str
+    path: str
+    imported_at: int
+    offset: int
 
 
 @dataclass(frozen=True)
@@ -98,6 +114,14 @@ class Store:
                 slain_at INTEGER NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS books (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                path TEXT NOT NULL,
+                imported_at INTEGER NOT NULL,
+                offset INTEGER NOT NULL DEFAULT 0
+            );
+
             CREATE TABLE IF NOT EXISTS daily_state (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
                 day TEXT NOT NULL,
@@ -147,6 +171,17 @@ class Store:
             self._conn.execute(
                 "ALTER TABLE app_state ADD COLUMN button_preset TEXT NOT NULL DEFAULT 'light'"
             )
+        read_columns = (
+            ("read_x", "INTEGER"),
+            ("read_y", "INTEGER"),
+            ("read_card", "TEXT NOT NULL DEFAULT 'medium'"),
+            ("read_font", "TEXT NOT NULL DEFAULT 'medium'"),
+            ("read_leading", "TEXT NOT NULL DEFAULT 'medium'"),
+            ("current_book", "TEXT"),
+        )
+        for name, decl in read_columns:
+            if name not in existing:
+                self._conn.execute(f"ALTER TABLE app_state ADD COLUMN {name} {decl}")
         daily_cols = {str(row[1]) for row in self._conn.execute("PRAGMA table_info(daily_state)")}
         daily_defaults = (
             ("spell_mode", "TEXT NOT NULL DEFAULT 'normal'"),
@@ -224,7 +259,8 @@ class Store:
             SELECT hidden, active_source, slot1, slot2, slot3,
                    x1, y1, x2, y2, x3, y3, floating, daily_goal,
                    style_preset, text_color, fill_color, fill_alpha,
-                   surface_id, button_preset
+                   surface_id, button_preset,
+                   read_x, read_y, read_card, read_font, read_leading, current_book
             FROM app_state WHERE id = 1
             """
         ).fetchone()
@@ -250,6 +286,12 @@ class Store:
             fill_alpha,
             surface_id,
             button_preset,
+            read_x,
+            read_y,
+            read_card,
+            read_font,
+            read_leading,
+            current_book,
         ) = row
         word, origin = _migrate_current(
             slot1,
@@ -280,20 +322,28 @@ class Store:
             fill_alpha=alpha,
             surface_id=surface,
             button_preset=buttons,
+            read_origin=_origin(read_x, read_y),
+            read_card=_choice(read_card, ("small", "medium", "large"), "medium"),
+            read_font=_choice(read_font, ("small", "medium", "large"), "medium"),
+            read_leading=_choice(read_leading, ("tight", "medium", "loose"), "medium"),
+            current_book=_slot(current_book),
         )
 
     def save_state(self, state: AppState) -> None:
         x, y = _pair(state.origin)
+        read_x, read_y = _pair(state.read_origin)
         self._conn.execute(
             """
             INSERT INTO app_state(
                 id, hidden, active_source, slot1, slot2, slot3,
                 x1, y1, x2, y2, x3, y3, floating, daily_goal,
                 style_preset, text_color, fill_color, fill_alpha,
-                surface_id, button_preset
+                surface_id, button_preset,
+                read_x, read_y, read_card, read_font, read_leading, current_book
             )
             VALUES (
                 1, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL, NULL, NULL, ?, ?,
+                ?, ?, ?, ?, ?, ?,
                 ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(id) DO UPDATE SET
@@ -315,7 +365,13 @@ class Store:
                 fill_color = excluded.fill_color,
                 fill_alpha = excluded.fill_alpha,
                 surface_id = excluded.surface_id,
-                button_preset = excluded.button_preset
+                button_preset = excluded.button_preset,
+                read_x = excluded.read_x,
+                read_y = excluded.read_y,
+                read_card = excluded.read_card,
+                read_font = excluded.read_font,
+                read_leading = excluded.read_leading,
+                current_book = excluded.current_book
             """,
             (
                 1 if state.hidden else 0,
@@ -326,8 +382,93 @@ class Store:
                 1 if state.floating else 0,
                 state.daily_goal,
                 *_stored_style(state),
+                read_x,
+                read_y,
+                _choice(state.read_card, ("small", "medium", "large"), "medium"),
+                _choice(state.read_font, ("small", "medium", "large"), "medium"),
+                _choice(state.read_leading, ("tight", "medium", "loose"), "medium"),
+                state.current_book,
             ),
         )
+        self._conn.commit()
+
+    def list_books(self) -> tuple[BookRecord, ...]:
+        rows = self._conn.execute(
+            "SELECT id, title, path, imported_at, offset FROM books ORDER BY imported_at, title"
+        ).fetchall()
+        return tuple(
+            BookRecord(
+                book_id=str(book_id),
+                title=str(title),
+                path=str(path),
+                imported_at=int(imported_at),
+                offset=max(0, int(offset)),
+            )
+            for book_id, title, path, imported_at, offset in rows
+        )
+
+    def add_book(self, stem: str, text: str) -> BookRecord:
+        titles = [book.title for book in self.list_books()]
+        title = disambiguate_title(titles, stem.strip() or "未命名")
+        book_id = uuid.uuid4().hex
+        folder = self.path.parent / "books"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / f"{book_id}.txt"
+        path.write_text(text, encoding="utf-8")
+        imported_at = self._conn.execute(
+            "SELECT COALESCE(MAX(imported_at), 0) + 1 FROM books"
+        ).fetchone()
+        order = int(imported_at[0]) if imported_at else 1
+        self._conn.execute(
+            """
+            INSERT INTO books(id, title, path, imported_at, offset)
+            VALUES (?, ?, ?, ?, 0)
+            """,
+            (book_id, title, str(path), order),
+        )
+        self._conn.commit()
+        return BookRecord(
+            book_id=book_id,
+            title=title,
+            path=str(path),
+            imported_at=order,
+            offset=0,
+        )
+
+    def read_book_text(self, book_id: str) -> str:
+        row = self._conn.execute("SELECT path FROM books WHERE id = ?", (book_id,)).fetchone()
+        if row is None:
+            return ""
+        path = Path(str(row[0]))
+        if not path.is_file():
+            return ""
+        try:
+            return path.read_text(encoding="utf-8")
+        except OSError:
+            return ""
+
+    def set_book_offset(self, book_id: str, offset: int) -> None:
+        self._conn.execute(
+            "UPDATE books SET offset = ? WHERE id = ?",
+            (max(0, int(offset)), book_id),
+        )
+        self._conn.commit()
+
+    def set_current_book(self, book_id: Optional[str]) -> None:
+        self._conn.execute(
+            "UPDATE app_state SET current_book = ? WHERE id = 1",
+            (book_id,),
+        )
+        self._conn.commit()
+
+    def remove_book(self, book_id: str) -> None:
+        row = self._conn.execute("SELECT path FROM books WHERE id = ?", (book_id,)).fetchone()
+        if row is not None:
+            path = Path(str(row[0])).resolve()
+            root = (self.path.parent / "books").resolve()
+            if path.parent == root:
+                path.unlink(missing_ok=True)
+        self._conn.execute("DELETE FROM books WHERE id = ?", (book_id,))
         self._conn.commit()
 
     def load_daily(self) -> Optional[DailyRecord]:
@@ -447,15 +588,16 @@ def _stored_style(
     state: AppState,
 ) -> tuple[str, Optional[str], Optional[str], Optional[int], str, str]:
     preset = state.style_preset if state.style_preset in ("light", "dark", "custom") else "light"
+    surface = _surface(state.surface_id)
     if preset in ("light", "dark"):
-        return preset, None, None, None, "word", preset
+        return preset, None, None, None, surface, preset
     text = _hex_or_none(state.text_color)
     fill = _hex_or_none(state.fill_color)
     alpha = state.fill_alpha
     button = state.button_preset if state.button_preset in ("light", "dark") else "light"
     if text is None or fill is None or alpha is None:
-        return "light", None, None, None, "word", "light"
-    return "custom", text, fill, max(20, min(230, int(alpha))), "word", button
+        return "light", None, None, None, surface, "light"
+    return "custom", text, fill, max(20, min(230, int(alpha))), surface, button
 
 
 def _style_fields(
@@ -466,7 +608,6 @@ def _style_fields(
     surface_id: object,
     button_preset: object,
 ) -> tuple[str, Optional[str], Optional[str], Optional[int], str, str]:
-    del surface_id
     return _stored_style(
         AppState(
             hidden=False,
@@ -476,10 +617,19 @@ def _style_fields(
             text_color=_hex_or_none(text_color),
             fill_color=_hex_or_none(fill_color),
             fill_alpha=None if fill_alpha is None else int(fill_alpha),
-            surface_id="word",
+            surface_id=_surface(surface_id),
             button_preset=str(button_preset or "light"),
         )
     )
+
+
+def _surface(value: object) -> str:
+    return "read" if str(value or "") == "read" else "word"
+
+
+def _choice(value: object, allowed: tuple[str, ...], default: str) -> str:
+    text = str(value or "")
+    return text if text in allowed else default
 
 
 def _hex_or_none(value: object) -> Optional[str]:
