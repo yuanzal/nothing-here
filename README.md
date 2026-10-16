@@ -17,7 +17,7 @@ Nothing Here 不是全屏背单词 App，而是贴在壁纸层（或浮在窗口
 | **正反面** | 正面只看词；译文/例句后认识或不认识；`Ctrl+Alt+S` 显隐卡片 |
 | **风格** | 浅色、黑底白字、自定义文字色；底面透明 |
 | **桌面嵌入** | 默认贴桌面图标层；可「浮在窗口上」 |
-| **阅读** | 导入 `.txt`，按页和章翻；卡片大小、字号、行距只作用于阅读 |
+| **阅读** | 导入 txt、md、html、epub、docx、odt、fb2，按页和章翻；卡片大小、字号、行距只作用于阅读 |
 
 托盘名称是 **Nothing Here**（任务栏不出现「背单词」「雅思」）。同一时间只运行一个实例。
 
@@ -193,7 +193,7 @@ class ExampleSource(Protocol):
 
 ### 现状（诚实版）
 
-托盘「功能面」有「单词 / 阅读 / 考试」。`surface_id` 为 `word` 或 `read`。点「考试」仍会留在当前这一面。阅读的规则在 `domain/read.py`，书和进度在 `storage`，卡片在 `ui/read_window.py`。
+托盘「功能面」有「单词 / 阅读 / 考试」。`surface_id` 为 `word` 或 `read`。点「考试」仍会留在当前这一面。阅读的翻页规则在 `domain/read.py`，epub 等格式抽正文在 `domain/formats.py`，书和进度在 `storage`，卡片在 `ui/read_window.py`。
 
 卡片（`CardWindow`）、桌面嵌入、热键、风格是**容器级**能力；单词抽卡、打分、拼写都写在「单词」这条链路里（`domain/daily.py`、`domain/spell.py`、`app` 的 grade / render）。**还没有**类似 `VocabSource` 的 `Surface` 注册表。
 
