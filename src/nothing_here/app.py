@@ -13,7 +13,8 @@ from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import QApplication, QFileDialog
 
 from nothing_here.desktop.host import DesktopHost
-from nothing_here.domain.read import chapter_starts, decode_book_bytes, turn_chapter, turn_page
+from nothing_here.domain.formats import SUPPORTED_SUFFIXES, dialog_filter, extract_book_text
+from nothing_here.domain.read import chapter_starts, turn_chapter, turn_page
 from nothing_here.domain.daily import (
     DailyPlan,
     grade,
@@ -447,22 +448,23 @@ class App(QObject):
         self._persist()
 
     def import_book(self) -> None:
-        path, _selected = QFileDialog.getOpenFileName(None, "导入", "", "文本 (*.txt)")
+        path, _selected = QFileDialog.getOpenFileName(None, "导入", "", dialog_filter())
         if not path:
             return
         source = Path(path)
-        if source.suffix.lower() != ".txt":
-            self._tray.show_import_failed("导入失败：只能导入 .txt 文件。")
+        suffix = source.suffix.lower()
+        if suffix not in SUPPORTED_SUFFIXES:
+            self._tray.show_import_failed("导入失败：只能导入 txt、md、html、epub、docx、odt、fb2。")
             return
         try:
             data = source.read_bytes()
         except OSError:
             self._tray.show_import_failed("导入失败：读不到这个文件。")
             return
-        text = decode_book_bytes(data)
+        text = extract_book_text(suffix, data)
         if text is None:
             self._tray.show_import_failed(
-                "导入失败：文件无法按 UTF-8 或 GB18030 读取，或去掉空白后没有内容。"
+                "导入失败：读不出正文。文件可能是空的、加密的，或不是 UTF-8 / GB18030。"
             )
             return
         record = self._store.add_book(source.stem or "未命名", text)
