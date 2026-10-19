@@ -13,7 +13,7 @@ from nothing_here.domain.loaf import (
     parse_clock,
     strip_text,
 )
-from nothing_here.domain.loaf_look import PLAIN, loaf_look
+from nothing_here.ui.skins import skin_for
 from nothing_here.fx import parse_eur_rates
 from nothing_here.storage.db import LoafRecord, Store
 
@@ -171,11 +171,13 @@ class RateParseTests(unittest.TestCase):
         self.assertIsNone(parse_eur_rates(b"[]"))
 
 
-class LoafLookTests(unittest.TestCase):
-    def test_unknown_look_falls_back_to_plain(self) -> None:
-        self.assertEqual(loaf_look("cute").look_id, PLAIN.look_id)
-        self.assertGreaterEqual(PLAIN.min_width, 240)
-        self.assertGreaterEqual(PLAIN.min_height, 72)
+class SkinTests(unittest.TestCase):
+    def test_plain_is_the_only_skin_and_unknown_ids_fall_back(self) -> None:
+        plain = skin_for("plain")
+        self.assertEqual(plain.label, "极简无痕")
+        self.assertEqual([mode.mode_id for mode in plain.color_modes], ["light", "dark", "custom"])
+        self.assertIs(skin_for("cute"), plain)
+        self.assertGreaterEqual(plain.strip_metrics.min_width, 240)
 
 
 if __name__ == "__main__":

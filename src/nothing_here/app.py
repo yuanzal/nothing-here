@@ -16,7 +16,6 @@ from PyQt6.QtWidgets import QApplication, QFileDialog
 from nothing_here.desktop.host import DesktopHost
 from nothing_here.domain.formats import SUPPORTED_SUFFIXES, dialog_filter, extract_book_text
 from nothing_here.domain.loaf import PaySettings, format_clock, strip_text
-from nothing_here.domain.loaf_look import loaf_look
 from nothing_here.domain.read import chapter_starts, turn_chapter, turn_page
 from nothing_here.domain.daily import (
     DailyPlan,
@@ -50,7 +49,7 @@ from nothing_here.input.hotkey import HotkeyListener
 from nothing_here.storage.db import AppState, DailyRecord, LoafRecord, Store
 from nothing_here.ui.card_window import CardWindow, Face
 from nothing_here.ui.read_window import READ_CARD_SIZE, READ_FONT_PX, READ_LEADING, ReadWindow
-from nothing_here.ui.style import palette_for
+from nothing_here.ui.skins import skin_for
 from nothing_here.ui.tray import Tray
 from nothing_here.ui.wage_strip import WageStrip
 from nothing_here.ui.work_span_dialog import WorkSpanDialog
@@ -140,7 +139,7 @@ class App(QObject):
         self._pay = _pay_from(loaf)
         self._loaf_hidden = loaf.hidden
         self._loaf_origin = loaf.origin
-        self._loaf_look = loaf.look
+        self._skin_id = skin_for(self._store.load_skin()).skin_id
         self._fx_attempted, fx_raw = self._store.load_fx()
         self._fx_rates = _rates_from(fx_raw)
         self._suppressed = False
@@ -178,8 +177,8 @@ class App(QObject):
             read_leading=self._read_leading,
         )
         self._sync_loaf_tray()
-        self._tray.show_cards.connect(self.show_cards)
-        self._tray.hide_cards.connect(self.hide_cards)
+        self._tray.set_card_hidden(self._hidden)
+        self._tray.card_hidden_chosen.connect(self.set_card_hidden)
         self._tray.goal_chosen.connect(self.change_goal)
         self._tray.source_chosen.connect(self.switch_source)
         self._tray.layer_chosen.connect(self.set_floating)
@@ -199,9 +198,10 @@ class App(QObject):
         self._tray.loaf_mode_chosen.connect(self.set_loaf_mode)
         self._tray.loaf_amount_chosen.connect(self.set_loaf_amount)
         self._tray.loaf_display_chosen.connect(self.set_loaf_display)
-        self._tray.loaf_look_chosen.connect(self.set_loaf_look)
         self._tray.loaf_work_chosen.connect(self.edit_work_span)
+        self._tray.skin_chosen.connect(self.set_skin)
         self._tray.suppress_chosen.connect(self.toggle_visibility)
+        self._tray.set_skin(self._skin_id)
         self.visibility_hotkey_pressed.connect(self.toggle_visibility)
         self._hotkey = HotkeyListener(self.visibility_hotkey_pressed.emit)
         self._hotkey.start()
@@ -223,6 +223,13 @@ class App(QObject):
             self.show_cards()
         self._apply_loaf()
         self._ensure_rates()
+
+    def set_card_hidden(self, hidden: bool) -> None:
+        if hidden:
+            self.hide_cards()
+        else:
+            self.show_cards()
+        self._tray.set_card_hidden(self._hidden)
 
     def show_cards(self) -> None:
         if self._view is not ViewState.HIDDEN:
@@ -250,10 +257,14 @@ class App(QObject):
             self._persist()
             return
         self._view = ViewState.VISIBLE
+        self._tray.set_card_hidden(False)
         self._persist()
 
     def hide_cards(self) -> None:
+        self._hidden = True
+        self._tray.set_card_hidden(True)
         if self._view is ViewState.HIDDEN:
+            self._persist()
             return
         self._take_pending_slay()
         self._spell = dismiss_invite_on_hide(self._spell)
@@ -455,6 +466,19 @@ class App(QObject):
         self._apply_style()
         self._persist()
 
+    def set_skin(self, skin_id: str) -> None:
+        chosen = skin_for(skin_id).skin_id
+        if chosen == self._skin_id:
+            self._tray.set_skin(self._skin_id)
+            return
+        self._skin_id = chosen
+        self._store.save_skin(chosen)
+        self._tray.set_skin(chosen)
+        self._apply_style()
+        if self._loaf is not None:
+            self._loaf.apply_skin(skin_for(chosen))
+            self._place_loaf()
+
     def choose_custom_style(self, text: str, fill: str, alpha: int) -> None:
         self._style_preset = "custom"
         self._text_color = text.upper()
@@ -590,17 +614,6 @@ class App(QObject):
             self._sync_loaf_tray()
             return
         self._pay = replace(self._pay, display=display)
-        self._sync_loaf()
-
-    def set_loaf_look(self, look_id: str) -> None:
-        chosen = loaf_look(look_id).look_id
-        if chosen == self._loaf_look:
-            self._sync_loaf_tray()
-            return
-        self._loaf_look = chosen
-        if self._loaf is not None:
-            self._loaf.apply_look(loaf_look(chosen))
-            self._place_loaf()
         self._sync_loaf()
 
     def edit_work_span(self) -> None:
@@ -797,7 +810,7 @@ class App(QObject):
         card.spell_skip.connect(self._on_spell_skip)
         card.spell_submitted.connect(self._on_spell_submitted)
         card.set_layer_floating(self._floating)
-        card.apply_palette(self._palette())
+        self._dress(card)
         card.apply_layer(self._floating)
         card.winId()
         if not self._host.prepare(card, self._floating):
@@ -815,7 +828,7 @@ class App(QObject):
             return
         if not isinstance(self._card, CardWindow):
             return
-        self._card.apply_palette(self._palette())
+        self._dress(self._card)
         self._card.set_layer_floating(self._floating)
         mode = self._spell.mode
         if mode is SpellMode.INVITE:
@@ -885,7 +898,6 @@ class App(QObject):
             self._loaf_hidden,
             format(self._pay.daily_amount, "f"),
             format(self._pay.monthly_amount, "f"),
-            self._loaf_look,
         )
 
     def _apply_loaf(self) -> None:
@@ -895,14 +907,13 @@ class App(QObject):
         if self._loaf is None:
             self._open_loaf()
             return
-        self._loaf.apply_palette(self._palette())
+        self._dress(self._loaf)
         self._refresh_loaf()
 
     def _open_loaf(self) -> bool:
         self._close_loaf()
         strip = WageStrip()
-        strip.apply_look(loaf_look(self._loaf_look))
-        strip.apply_palette(self._palette())
+        self._dress(strip)
         strip.apply_layer(self._floating)
         strip.set_line(self._loaf_line())
         strip.moved.connect(lambda x, y: self._move_loaf(x, y, False))
@@ -1037,7 +1048,6 @@ class App(QObject):
                 lunch_start=self._pay.lunch_start,
                 lunch_end=self._pay.lunch_end,
                 origin=self._loaf_origin,
-                look=self._loaf_look,
             )
         )
 
@@ -1078,14 +1088,18 @@ class App(QObject):
             self._fill_alpha,
         )
 
+    def _dress(self, widget) -> None:
+        widget.apply_skin(skin_for(self._skin_id))
+        widget.apply_palette(self._palette())
+
     def _apply_style(self) -> None:
         if self._card is not None:
-            self._card.apply_palette(self._palette())
+            self._dress(self._card)
         if self._loaf is not None:
-            self._loaf.apply_palette(self._palette())
+            self._dress(self._loaf)
 
     def _palette(self):
-        return palette_for(
+        return skin_for(self._skin_id).palette(
             self._style_preset,
             self._text_color,
             self._fill_color,
@@ -1135,7 +1149,7 @@ class App(QObject):
         card.move_finished.connect(lambda x, y: self._move_card(x, y, persist=True))
         card.layer_requested.connect(self._request_layer_toggle)
         card.set_layer_floating(self._floating)
-        card.apply_palette(self._palette())
+        self._dress(card)
         card.apply_layer(self._floating)
         card.winId()
         if not self._host.prepare(card, self._floating):

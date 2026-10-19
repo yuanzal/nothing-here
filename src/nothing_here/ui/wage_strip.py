@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QPoint, Qt, pyqtSignal
-from PyQt6.QtGui import QFont
+from PyQt6.QtGui import QFont, QPainter
 from PyQt6.QtWidgets import QLabel, QWidget
 
-from nothing_here.domain.loaf_look import PLAIN, LoafLook
+from nothing_here.ui.skins import Skin, skin_for
 from nothing_here.ui.style import LIGHT, CardPalette
 
 
@@ -22,20 +22,22 @@ class WageStrip(QWidget):
         self._line = ""
         self._width = 1
         self._height = 1
-        self._look = PLAIN
+        self._look = skin_for("plain")
         self._label = QLabel(self)
         self._label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
         self.apply_palette(LIGHT)
-        self.apply_look(PLAIN)
+        self.apply_skin(self._look)
         self.apply_layer(False)
 
-    def apply_look(self, look: LoafLook) -> None:
-        self._look = look
+    def apply_skin(self, skin: Skin) -> None:
+        self._look = skin
+        metrics = skin.strip_metrics
         font = QFont("Microsoft YaHei")
-        font.setPixelSize(look.font_px)
+        font.setPixelSize(metrics.font_px)
         self._label.setFont(font)
         if self._line:
             self.set_line(self._line)
+        self.update()
 
     def line(self) -> str:
         return self._line
@@ -44,9 +46,9 @@ class WageStrip(QWidget):
         self._line = text
         self._label.setText(text)
         hint = self._label.sizeHint()
-        look = self._look
-        self._width = max(look.min_width, hint.width() + look.pad_x * 2)
-        self._height = max(look.min_height, hint.height() + look.pad_y * 2)
+        metrics = self._look.strip_metrics
+        self._width = max(metrics.min_width, hint.width() + metrics.pad_x * 2)
+        self._height = max(metrics.min_height, hint.height() + metrics.pad_y * 2)
         self._label.setGeometry(
             (self._width - hint.width()) // 2,
             (self._height - hint.height()) // 2,
@@ -64,7 +66,14 @@ class WageStrip(QWidget):
         self._origin = (x, y)
 
     def apply_palette(self, palette: CardPalette) -> None:
+        self._palette = palette
         self._label.setStyleSheet(f"color: {palette.word}; background: transparent;")
+        self.update()
+
+    def paintEvent(self, event) -> None:  # noqa: N802
+        del event
+        painter = QPainter(self)
+        self._look.paint_backdrop(painter, self.rect(), self._palette)
 
     def apply_layer(self, floating: bool) -> None:
         flags = (

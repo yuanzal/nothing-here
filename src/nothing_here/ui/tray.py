@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import QColorDialog, QInputDialog, QMenu, QMessageBox, QSys
 
 from nothing_here.domain.daily import GOAL_MAX, GOAL_MIN
 from nothing_here.domain.loaf import CURRENCY_LABELS
-from nothing_here.domain.loaf_look import LOOKS
+from nothing_here.ui.skins import skins
 from nothing_here.ui.pay_dialog import PayAmountDialog
 
 _CARD_LEVELS = (("large", "大"), ("medium", "中"), ("small", "小"))
@@ -18,6 +18,7 @@ _LEADING_LEVELS = (("loose", "大"), ("medium", "中"), ("tight", "小"))
 class Tray(QObject):
     show_cards = pyqtSignal()
     hide_cards = pyqtSignal()
+    card_hidden_chosen = pyqtSignal(bool)
     goal_chosen = pyqtSignal(int)
     source_chosen = pyqtSignal(str)
     layer_chosen = pyqtSignal(bool)
@@ -37,8 +38,8 @@ class Tray(QObject):
     loaf_mode_chosen = pyqtSignal(str)
     loaf_amount_chosen = pyqtSignal(str, str, str)
     loaf_display_chosen = pyqtSignal(str)
-    loaf_look_chosen = pyqtSignal(str)
     loaf_work_chosen = pyqtSignal()
+    skin_chosen = pyqtSignal(str)
     suppress_chosen = pyqtSignal()
 
     def __init__(
@@ -80,9 +81,9 @@ class Tray(QObject):
         self._icon = QSystemTrayIcon(make_tray_icon())
         self._icon.setToolTip("Nothing Here")
         menu = QMenu()
-        show_action = menu.addAction("显示卡片")
-        hide_action = menu.addAction("隐藏卡片")
-        suppress_action = menu.addAction("全部隐藏    Ctrl+Alt+S")
+        self._card_hide = menu.addAction("隐藏卡片")
+        self._card_hide.setCheckable(True)
+        self._card_hide.triggered.connect(self.card_hidden_chosen.emit)
         self._book_menu = menu.addMenu("书籍")
         self._card_menu = menu.addMenu("卡片大小")
         self._font_menu = menu.addMenu("字号")
@@ -96,16 +97,6 @@ class Tray(QObject):
         self._spell_action = menu.addAction("开始拼写测试")
         self._spell_action.triggered.connect(self.spell_start_chosen.emit)
         self._recycle_menu = menu.addMenu("回收站")
-        style_menu = menu.addMenu("风格")
-        self._light_action = style_menu.addAction("浅色")
-        self._dark_action = style_menu.addAction("黑底白字")
-        self._light_action.setCheckable(True)
-        self._dark_action.setCheckable(True)
-        custom_action = style_menu.addAction("自定义…")
-        self._float_action = menu.addAction("浮在窗口上")
-        self._float_action.setCheckable(True)
-        self._float_action.setChecked(floating)
-        self._float_action.triggered.connect(self.layer_chosen.emit)
         vocab_menu = menu.addMenu("词库")
         self._group = QActionGroup(menu)
         self._group.setExclusive(True)
@@ -136,14 +127,16 @@ class Tray(QObject):
         menu.addSeparator()
         self._build_loaf_menu(menu)
         menu.addSeparator()
+        suppress_action = menu.addAction("全部隐藏    Ctrl+Alt+S")
+        self._build_style_menu(menu)
+        self._float_action = menu.addAction("浮在窗口上")
+        self._float_action.setCheckable(True)
+        self._float_action.setChecked(floating)
+        self._float_action.triggered.connect(self.layer_chosen.emit)
+        menu.addSeparator()
         quit_action = menu.addAction("退出")
-        show_action.triggered.connect(self.show_cards.emit)
-        hide_action.triggered.connect(self.hide_cards.emit)
         suppress_action.triggered.connect(self.suppress_chosen.emit)
         self._goal_action.triggered.connect(self._edit_goal)
-        self._light_action.triggered.connect(lambda _checked=False: self._pick_preset("light"))
-        self._dark_action.triggered.connect(lambda _checked=False: self._pick_preset("dark"))
-        custom_action.triggered.connect(self._pick_custom)
         self._word_action.triggered.connect(self._keep_word_surface)
         self._read_action.triggered.connect(self._choose_read_surface)
         self._exam_action.triggered.connect(self._reject_surface)
@@ -167,6 +160,11 @@ class Tray(QObject):
         self._rebuild_slain()
         self.set_surface(self._surface)
         self._icon.show()
+
+    def set_card_hidden(self, hidden: bool) -> None:
+        self._card_hide.blockSignals(True)
+        self._card_hide.setChecked(hidden)
+        self._card_hide.blockSignals(False)
 
     def set_spell_tray_visible(self, visible: bool) -> None:
         self._spell_tray = visible
@@ -206,6 +204,43 @@ class Tray(QObject):
         self._slain_items = list(items)
         self._rebuild_slain()
 
+    def _build_style_menu(self, menu: QMenu) -> None:
+        style_menu = menu.addMenu("风格")
+        self._skin_actions: dict[str, QAction] = {}
+        self._color_actions: dict[str, list[QAction]] = {}
+        skin_group = QActionGroup(style_menu)
+        skin_group.setExclusive(True)
+        for skin in skins():
+            sub = style_menu.addMenu(skin.label)
+            header = sub.menuAction()
+            header.setCheckable(True)
+            skin_group.addAction(header)
+            self._skin_actions[skin.skin_id] = header
+            header.triggered.connect(
+                lambda checked, chosen=skin.skin_id: self.skin_chosen.emit(chosen) if checked else None
+            )
+            color_group = QActionGroup(sub)
+            color_group.setExclusive(True)
+            for mode in skin.color_modes:
+                item = sub.addAction(mode.label)
+                item.setCheckable(True)
+                if mode.custom:
+                    item.triggered.connect(self._pick_custom)
+                    continue
+                color_group.addAction(item)
+                self._color_actions.setdefault(mode.mode_id, []).append(item)
+                item.triggered.connect(
+                    lambda checked, preset=mode.mode_id: self._pick_preset(preset) if checked else None
+                )
+        self._light_action = self._color_actions["light"][0]
+        self._dark_action = self._color_actions["dark"][0]
+
+    def set_skin(self, skin_id: str) -> None:
+        for key, action in self._skin_actions.items():
+            action.blockSignals(True)
+            action.setChecked(key == skin_id)
+            action.blockSignals(False)
+
     def set_style_state(
         self,
         preset: str,
@@ -217,12 +252,11 @@ class Tray(QObject):
         self._text_color = text_color
         self._fill_color = fill_color
         self._fill_alpha = fill_alpha
-        self._light_action.blockSignals(True)
-        self._dark_action.blockSignals(True)
-        self._light_action.setChecked(preset == "light")
-        self._dark_action.setChecked(preset == "dark")
-        self._light_action.blockSignals(False)
-        self._dark_action.blockSignals(False)
+        for mode, actions in self._color_actions.items():
+            for action in actions:
+                action.blockSignals(True)
+                action.setChecked(mode == preset)
+                action.blockSignals(False)
 
     def _build_loaf_menu(self, menu: QMenu) -> None:
         loaf = menu.addMenu("摸鱼计时")
@@ -247,9 +281,8 @@ class Tray(QObject):
         daily.addAction("金额…").triggered.connect(lambda _checked=False: self._edit_loaf_amount("daily"))
         monthly.addAction("金额…").triggered.connect(lambda _checked=False: self._edit_loaf_amount("monthly"))
         self._loaf_displays = _currency_menu(loaf, "货币显示", self.loaf_display_chosen)
-        self._loaf_looks = _exclusive_levels(loaf.addMenu("风格"), tuple((look.look_id, look.label) for look in LOOKS), "plain", self.loaf_look_chosen)
         loaf.addAction("设置工作时长").triggered.connect(self.loaf_work_chosen.emit)
-        self._loaf_hide = loaf.addAction("隐藏")
+        self._loaf_hide = loaf.addAction("隐藏薪条")
         self._loaf_hide.setCheckable(True)
         self._loaf_hide.triggered.connect(self.loaf_hidden_chosen.emit)
 
@@ -261,7 +294,6 @@ class Tray(QObject):
         hidden: bool,
         daily_amount: str,
         monthly_amount: str,
-        look: str,
     ) -> None:
         self._loaf_mode = "monthly" if pay_mode == "monthly" else "daily"
         self._loaf_unit = unit
@@ -278,7 +310,6 @@ class Tray(QObject):
         self._loaf_monthly_mode.blockSignals(False)
         self._loaf_hide.blockSignals(False)
         _check_only(self._loaf_displays, display)
-        _check_only(self._loaf_looks, look)
 
     def _edit_loaf_amount(self, mode: str) -> None:
         title = "日薪" if mode == "daily" else "月薪"
@@ -369,8 +400,11 @@ class Tray(QObject):
             self.book_remove_chosen.emit()
 
     def _pick_preset(self, preset: str) -> None:
-        self._light_action.setChecked(preset == "light")
-        self._dark_action.setChecked(preset == "dark")
+        for mode, actions in self._color_actions.items():
+            for action in actions:
+                action.blockSignals(True)
+                action.setChecked(mode == preset)
+                action.blockSignals(False)
         self.style_preset_chosen.emit(preset)
 
     def _pick_custom(self, _checked: bool = False) -> None:

@@ -9,7 +9,6 @@ from pathlib import Path
 from typing import Optional
 
 from nothing_here.domain.loaf import CURRENCIES
-from nothing_here.domain.loaf_look import loaf_look
 from nothing_here.domain.read import disambiguate_title
 from nothing_here.domain.spell import MISS_LIMIT
 
@@ -169,6 +168,11 @@ class Store:
                 x INTEGER,
                 y INTEGER,
                 look TEXT NOT NULL DEFAULT 'plain'
+            );
+
+            CREATE TABLE IF NOT EXISTS ui_skin (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                skin TEXT NOT NULL DEFAULT 'plain'
             );
 
             CREATE TABLE IF NOT EXISTS fx_cache (
@@ -557,7 +561,7 @@ class Store:
             lunch_start=_minute(lunch_start),
             lunch_end=_minute(lunch_end),
             origin=_origin(x, y),
-            look=loaf_look(str(look or "")).look_id,
+            look=_skin_id(look),
         )
 
     def save_loaf(self, record: LoafRecord) -> None:
@@ -598,8 +602,24 @@ class Store:
                 record.lunch_end,
                 x,
                 y,
-                loaf_look(record.look).look_id,
+                _skin_id(record.look),
             ),
+        )
+        self._conn.commit()
+
+    def load_skin(self) -> str:
+        row = self._conn.execute("SELECT skin FROM ui_skin WHERE id = 1").fetchone()
+        if row is None:
+            return "plain"
+        return _skin_id(row[0])
+
+    def save_skin(self, skin_id: str) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO ui_skin(id, skin) VALUES (1, ?)
+            ON CONFLICT(id) DO UPDATE SET skin = excluded.skin
+            """,
+            (_skin_id(skin_id),),
         )
         self._conn.commit()
 
@@ -790,6 +810,11 @@ def _style_fields(
 
 def _surface(value: object) -> str:
     return "read" if str(value or "") == "read" else "word"
+
+
+def _skin_id(value: object) -> str:
+    text = str(value or "").strip()
+    return text or "plain"
 
 
 def _currency(value: object) -> str:

@@ -19,6 +19,7 @@ from nothing_here.domain.spell import SpellCell, cells_for
 from nothing_here.domain.weight import accuracy_percent
 from nothing_here.input.spell_keys import SpellKeyHook
 from nothing_here.paths import ui_asset
+from nothing_here.ui.skins import Skin, skin_for
 from nothing_here.ui.style import LIGHT, CardPalette
 
 CARD_WIDTH = 300
@@ -148,6 +149,7 @@ class CardWindow(QWidget):
         self._press_origin = (0, 0)
         self._scroll_offset = 0
         self._palette = LIGHT
+        self._skin: Skin = skin_for("plain")
         self._fade = 1.0
         self._sink = 0
         self._burning = False
@@ -324,6 +326,10 @@ class CardWindow(QWidget):
     def apply_palette(self, palette: CardPalette) -> None:
         self._palette = palette
         self._paint_palette()
+
+    def apply_skin(self, skin: Skin) -> None:
+        self._skin = skin
+        self.update()
 
     def set_layer_floating(self, floating: bool) -> None:
         self._layer.setText("回到桌面" if floating else "浮在窗口上")
@@ -541,9 +547,7 @@ class CardWindow(QWidget):
         del event
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
-        painter.fillRect(self.rect(), QColor(0, 0, 0, 0))
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        self._skin.paint_backdrop(painter, self.rect(), self._palette)
         painter.translate(0, self._sink)
         content = self._body.height()
         overflow = content - self.height()

@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
 
 from nothing_here.domain.read import page_of
 from nothing_here.ui.paginate import page_lines, page_starts
+from nothing_here.ui.skins import Skin, skin_for
 from nothing_here.ui.style import LIGHT, CardPalette
 
 PADDING = 16
@@ -151,6 +152,7 @@ class ReadWindow(QWidget):
         self._press_global: QPoint | None = None
         self._press_origin = (0, 0)
         self._palette = LIGHT
+        self._skin: Skin = skin_for("plain")
         self._empty = True
         self._box = READ_CARD_SIZE["medium"]
         self.apply_layer(False)
@@ -226,6 +228,10 @@ class ReadWindow(QWidget):
             palette.word,
             self._empty,
         )
+
+    def apply_skin(self, skin: Skin) -> None:
+        self._skin = skin
+        self.update()
 
     def set_layer_floating(self, floating: bool) -> None:
         self._layer.setText("回到桌面" if floating else "浮在窗口上")
@@ -321,8 +327,7 @@ class ReadWindow(QWidget):
     def paintEvent(self, event) -> None:  # noqa: N802
         del event
         painter = QPainter(self)
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
-        painter.fillRect(self.rect(), QColor(0, 0, 0, 0))
+        self._skin.paint_backdrop(painter, self.rect(), self._palette)
 
     def _nav_button(self, label: str, signal) -> QPushButton:
         button = QPushButton(label)
