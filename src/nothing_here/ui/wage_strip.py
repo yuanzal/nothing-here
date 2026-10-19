@@ -1,0 +1,108 @@
+"""薪条：一行今日累计，可拖，不承载功能面。"""
+
+from __future__ import annotations
+
+from PyQt6.QtCore import QPoint, Qt, pyqtSignal
+from PyQt6.QtGui import QFont
+from PyQt6.QtWidgets import QLabel, QWidget
+
+from nothing_here.domain.loaf_look import PLAIN, LoafLook
+from nothing_here.ui.style import LIGHT, CardPalette
+
+
+class WageStrip(QWidget):
+    moved = pyqtSignal(int, int)
+    move_finished = pyqtSignal(int, int)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._origin = (0, 0)
+        self._press_global: QPoint | None = None
+        self._press_origin = (0, 0)
+        self._line = ""
+        self._width = 1
+        self._height = 1
+        self._look = PLAIN
+        self._label = QLabel(self)
+        self._label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+        self.apply_palette(LIGHT)
+        self.apply_look(PLAIN)
+        self.apply_layer(False)
+
+    def apply_look(self, look: LoafLook) -> None:
+        self._look = look
+        font = QFont("Microsoft YaHei")
+        font.setPixelSize(look.font_px)
+        self._label.setFont(font)
+        if self._line:
+            self.set_line(self._line)
+
+    def line(self) -> str:
+        return self._line
+
+    def set_line(self, text: str) -> None:
+        self._line = text
+        self._label.setText(text)
+        hint = self._label.sizeHint()
+        look = self._look
+        self._width = max(look.min_width, hint.width() + look.pad_x * 2)
+        self._height = max(look.min_height, hint.height() + look.pad_y * 2)
+        self._label.setGeometry(
+            (self._width - hint.width()) // 2,
+            (self._height - hint.height()) // 2,
+            hint.width(),
+            hint.height(),
+        )
+
+    def preferred_width(self) -> int:
+        return self._width
+
+    def preferred_height(self) -> int:
+        return self._height
+
+    def set_screen_origin(self, x: int, y: int) -> None:
+        self._origin = (x, y)
+
+    def apply_palette(self, palette: CardPalette) -> None:
+        self._label.setStyleSheet(f"color: {palette.word}; background: transparent;")
+
+    def apply_layer(self, floating: bool) -> None:
+        flags = (
+            Qt.WindowType.FramelessWindowHint
+            | Qt.WindowType.Tool
+            | Qt.WindowType.WindowDoesNotAcceptFocus
+            | Qt.WindowType.NoDropShadowWindowHint
+        )
+        if floating:
+            flags |= Qt.WindowType.WindowStaysOnTopHint
+        self.setWindowFlags(flags)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_NoSystemBackground, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, True)
+        self.setAttribute(Qt.WidgetAttribute.WA_QuitOnClose, False)
+        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.setCursor(Qt.CursorShape.OpenHandCursor)
+
+    def mousePressEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._press_global = event.globalPosition().toPoint()
+            self._press_origin = self._origin
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:  # noqa: N802
+        if self._press_global is not None and event.buttons() & Qt.MouseButton.LeftButton:
+            delta = event.globalPosition().toPoint() - self._press_global
+            self.moved.emit(self._press_origin[0] + delta.x(), self._press_origin[1] + delta.y())
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:  # noqa: N802
+        if event.button() == Qt.MouseButton.LeftButton and self._press_global is not None:
+            self._press_global = None
+            self.move_finished.emit(self._origin[0], self._origin[1])
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)

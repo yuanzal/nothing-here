@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+from nothing_here.domain.loaf import CURRENCIES
+from nothing_here.domain.loaf_look import loaf_look
 from nothing_here.domain.read import disambiguate_title
 from nothing_here.domain.spell import MISS_LIMIT
 
@@ -50,6 +52,22 @@ class BookRecord:
     path: str
     imported_at: int
     offset: int
+
+
+@dataclass(frozen=True)
+class LoafRecord:
+    hidden: bool = False
+    pay_mode: str = "daily"
+    daily_amount: str = "0"
+    monthly_amount: str = "0"
+    unit: str = "CNY"
+    display: str = "CNY"
+    work_start: Optional[int] = None
+    work_end: Optional[int] = None
+    lunch_start: Optional[int] = None
+    lunch_end: Optional[int] = None
+    origin: Optional[tuple[int, int]] = None
+    look: str = "plain"
 
 
 @dataclass(frozen=True)
@@ -135,6 +153,29 @@ class Store:
                 spell_misses INTEGER NOT NULL DEFAULT 0,
                 spell_example_open INTEGER NOT NULL DEFAULT 0
             );
+
+            CREATE TABLE IF NOT EXISTS loaf_state (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                hidden INTEGER NOT NULL DEFAULT 0,
+                pay_mode TEXT NOT NULL DEFAULT 'daily',
+                daily_amount TEXT NOT NULL DEFAULT '0',
+                monthly_amount TEXT NOT NULL DEFAULT '0',
+                unit TEXT NOT NULL DEFAULT 'CNY',
+                display TEXT NOT NULL DEFAULT 'CNY',
+                work_start INTEGER,
+                work_end INTEGER,
+                lunch_start INTEGER,
+                lunch_end INTEGER,
+                x INTEGER,
+                y INTEGER,
+                look TEXT NOT NULL DEFAULT 'plain'
+            );
+
+            CREATE TABLE IF NOT EXISTS fx_cache (
+                id INTEGER PRIMARY KEY CHECK (id = 1),
+                attempted_on TEXT NOT NULL DEFAULT '',
+                rates_json TEXT NOT NULL DEFAULT '{}'
+            );
             """
         )
         self._ensure_columns()
@@ -194,6 +235,11 @@ class Store:
         for name, decl in daily_defaults:
             if name not in daily_cols:
                 self._conn.execute(f"ALTER TABLE daily_state ADD COLUMN {name} {decl}")
+        loaf_cols = {str(row[1]) for row in self._conn.execute("PRAGMA table_info(loaf_state)")}
+        if loaf_cols and "look" not in loaf_cols:
+            self._conn.execute(
+                "ALTER TABLE loaf_state ADD COLUMN look TEXT NOT NULL DEFAULT 'plain'"
+            )
 
     def get_progress(self, word: str) -> tuple[int, int]:
         row = self._conn.execute(
@@ -471,6 +517,125 @@ class Store:
         self._conn.execute("DELETE FROM books WHERE id = ?", (book_id,))
         self._conn.commit()
 
+    def load_loaf(self) -> LoafRecord:
+        row = self._conn.execute(
+            """
+            SELECT hidden, pay_mode, daily_amount, monthly_amount, unit, display,
+                   work_start, work_end, lunch_start, lunch_end, x, y, look
+            FROM loaf_state WHERE id = 1
+            """
+        ).fetchone()
+        if row is None:
+            return LoafRecord()
+        (
+            hidden,
+            pay_mode,
+            daily_amount,
+            monthly_amount,
+            unit,
+            display,
+            work_start,
+            work_end,
+            lunch_start,
+            lunch_end,
+            x,
+            y,
+            look,
+        ) = row
+        mode = str(pay_mode or "daily")
+        if mode not in ("daily", "monthly"):
+            mode = "daily"
+        return LoafRecord(
+            hidden=bool(hidden),
+            pay_mode=mode,
+            daily_amount=str(daily_amount or "0"),
+            monthly_amount=str(monthly_amount or "0"),
+            unit=_currency(unit),
+            display=_currency(display),
+            work_start=_minute(work_start),
+            work_end=_minute(work_end),
+            lunch_start=_minute(lunch_start),
+            lunch_end=_minute(lunch_end),
+            origin=_origin(x, y),
+            look=loaf_look(str(look or "")).look_id,
+        )
+
+    def save_loaf(self, record: LoafRecord) -> None:
+        x, y = _pair(record.origin)
+        mode = record.pay_mode if record.pay_mode in ("daily", "monthly") else "daily"
+        self._conn.execute(
+            """
+            INSERT INTO loaf_state(
+                id, hidden, pay_mode, daily_amount, monthly_amount, unit, display,
+                work_start, work_end, lunch_start, lunch_end, x, y, look
+            )
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                hidden = excluded.hidden,
+                pay_mode = excluded.pay_mode,
+                daily_amount = excluded.daily_amount,
+                monthly_amount = excluded.monthly_amount,
+                unit = excluded.unit,
+                display = excluded.display,
+                work_start = excluded.work_start,
+                work_end = excluded.work_end,
+                lunch_start = excluded.lunch_start,
+                lunch_end = excluded.lunch_end,
+                x = excluded.x,
+                y = excluded.y,
+                look = excluded.look
+            """,
+            (
+                1 if record.hidden else 0,
+                mode,
+                record.daily_amount,
+                record.monthly_amount,
+                _currency(record.unit),
+                _currency(record.display),
+                record.work_start,
+                record.work_end,
+                record.lunch_start,
+                record.lunch_end,
+                x,
+                y,
+                loaf_look(record.look).look_id,
+            ),
+        )
+        self._conn.commit()
+
+    def load_fx(self) -> tuple[str, dict[str, str]]:
+        row = self._conn.execute(
+            "SELECT attempted_on, rates_json FROM fx_cache WHERE id = 1"
+        ).fetchone()
+        if row is None:
+            return "", {}
+        attempted, raw = row
+        try:
+            parsed = json.loads(str(raw or "{}"))
+        except json.JSONDecodeError:
+            parsed = {}
+        rates = {
+            str(key): str(value)
+            for key, value in parsed.items()
+            if isinstance(parsed, dict)
+        } if isinstance(parsed, dict) else {}
+        return str(attempted or ""), rates
+
+    def save_fx(self, attempted_on: str, rates: Optional[dict[str, str]]) -> None:
+        current_day, current_rates = self.load_fx()
+        stored = current_rates if rates is None else rates
+        self._conn.execute(
+            """
+            INSERT INTO fx_cache(id, attempted_on, rates_json)
+            VALUES (1, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                attempted_on = excluded.attempted_on,
+                rates_json = excluded.rates_json
+            """,
+            (attempted_on or current_day, json.dumps(stored, ensure_ascii=False)),
+        )
+        self._conn.commit()
+
     def load_daily(self) -> Optional[DailyRecord]:
         row = self._conn.execute(
             """
@@ -625,6 +790,20 @@ def _style_fields(
 
 def _surface(value: object) -> str:
     return "read" if str(value or "") == "read" else "word"
+
+
+def _currency(value: object) -> str:
+    text = str(value or "")
+    return text if text in CURRENCIES else "CNY"
+
+
+def _minute(value: object) -> Optional[int]:
+    if value is None:
+        return None
+    minute = int(value)
+    if minute < 0 or minute >= 24 * 60:
+        return None
+    return minute
 
 
 def _choice(value: object, allowed: tuple[str, ...], default: str) -> str:

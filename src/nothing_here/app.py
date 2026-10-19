@@ -3,17 +3,20 @@ from __future__ import annotations
 import ctypes
 import sys
 from dataclasses import replace
-from datetime import date
+from datetime import date, datetime
+from decimal import Decimal, InvalidOperation
 from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import QObject, QTimer, pyqtSignal
+from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
 from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import QApplication, QFileDialog
 
 from nothing_here.desktop.host import DesktopHost
 from nothing_here.domain.formats import SUPPORTED_SUFFIXES, dialog_filter, extract_book_text
+from nothing_here.domain.loaf import PaySettings, format_clock, strip_text
+from nothing_here.domain.loaf_look import loaf_look
 from nothing_here.domain.read import chapter_starts, turn_chapter, turn_page
 from nothing_here.domain.daily import (
     DailyPlan,
@@ -42,12 +45,15 @@ from nothing_here.domain.spell import (
     start_from_tray,
     toggle_example,
 )
+from nothing_here.fx import fetch_eur_rates
 from nothing_here.input.hotkey import HotkeyListener
-from nothing_here.storage.db import AppState, DailyRecord, Store
+from nothing_here.storage.db import AppState, DailyRecord, LoafRecord, Store
 from nothing_here.ui.card_window import CardWindow, Face
 from nothing_here.ui.read_window import READ_CARD_SIZE, READ_FONT_PX, READ_LEADING, ReadWindow
 from nothing_here.ui.style import palette_for
 from nothing_here.ui.tray import Tray
+from nothing_here.ui.wage_strip import WageStrip
+from nothing_here.ui.work_span_dialog import WorkSpanDialog
 from nothing_here.vocab.examples import EntryExampleSource, load_example_sources, resolve_example
 from nothing_here.vocab.protocol import Entry, VocabSource
 from nothing_here.vocab.registry import catalog_from, load_sources
@@ -59,6 +65,13 @@ MIN_FRONT_HEIGHT = 96
 class ViewState(Enum):
     HIDDEN = "hidden"
     VISIBLE = "visible"
+
+
+class _RateFetch(QThread):
+    loaded = pyqtSignal(object)
+
+    def run(self) -> None:
+        self.loaded.emit(fetch_eur_rates())
 
 
 class App(QObject):
@@ -123,6 +136,20 @@ class App(QObject):
         self._page_starts: tuple[int, ...] = (0,)
         if self._current_book:
             self._load_open_book(self._current_book)
+        loaf = self._store.load_loaf()
+        self._pay = _pay_from(loaf)
+        self._loaf_hidden = loaf.hidden
+        self._loaf_origin = loaf.origin
+        self._loaf_look = loaf.look
+        self._fx_attempted, fx_raw = self._store.load_fx()
+        self._fx_rates = _rates_from(fx_raw)
+        self._suppressed = False
+        self._closing = False
+        self._loaf: Optional[WageStrip] = None
+        self._fx_thread: Optional[_RateFetch] = None
+        self._loaf_timer = QTimer(self)
+        self._loaf_timer.setInterval(1000)
+        self._loaf_timer.timeout.connect(self._refresh_loaf)
         self._view = ViewState.HIDDEN
         self._face = Face.FRONT
         self._card: Optional[CardWindow | ReadWindow] = None
@@ -150,6 +177,7 @@ class App(QObject):
             read_font=self._read_font,
             read_leading=self._read_leading,
         )
+        self._sync_loaf_tray()
         self._tray.show_cards.connect(self.show_cards)
         self._tray.hide_cards.connect(self.hide_cards)
         self._tray.goal_chosen.connect(self.change_goal)
@@ -167,6 +195,13 @@ class App(QObject):
         self._tray.read_card_chosen.connect(self.choose_read_card)
         self._tray.read_font_chosen.connect(self.choose_read_font)
         self._tray.read_leading_chosen.connect(self.choose_read_leading)
+        self._tray.loaf_hidden_chosen.connect(self.set_loaf_hidden)
+        self._tray.loaf_mode_chosen.connect(self.set_loaf_mode)
+        self._tray.loaf_amount_chosen.connect(self.set_loaf_amount)
+        self._tray.loaf_display_chosen.connect(self.set_loaf_display)
+        self._tray.loaf_look_chosen.connect(self.set_loaf_look)
+        self._tray.loaf_work_chosen.connect(self.edit_work_span)
+        self._tray.suppress_chosen.connect(self.toggle_visibility)
         self.visibility_hotkey_pressed.connect(self.toggle_visibility)
         self._hotkey = HotkeyListener(self.visibility_hotkey_pressed.emit)
         self._hotkey.start()
@@ -186,6 +221,8 @@ class App(QObject):
     def start(self) -> None:
         if not self._hidden:
             self.show_cards()
+        self._apply_loaf()
+        self._ensure_rates()
 
     def show_cards(self) -> None:
         if self._view is not ViewState.HIDDEN:
@@ -298,14 +335,30 @@ class App(QObject):
                 self._notify_embed_failed()
                 self._sync_layer_controls()
                 return
+        if not self._loaf_hidden and not self._suppressed:
+            self._open_loaf()
         self._sync_layer_controls()
         self._persist()
 
     def toggle_visibility(self) -> None:
-        if self._view is ViewState.HIDDEN:
-            self.show_cards()
+        if self._suppressed:
+            self._suppressed = False
+            if not self._hidden:
+                self.show_cards()
+            self._apply_loaf()
             return
-        self.hide_cards()
+        card_on = self._view is ViewState.VISIBLE
+        loaf_on = self._loaf is not None
+        if not card_on and not loaf_on:
+            return
+        self._suppressed = True
+        if card_on:
+            self._take_pending_slay()
+            self._spell = dismiss_invite_on_hide(self._spell)
+            self._destroy_windows()
+            self._view = ViewState.HIDDEN
+            self._face = Face.FRONT
+        self._close_loaf()
 
     def switch_source(self, source_id: str) -> None:
         if self._burning or self._surface_id != "word" or source_id not in self._source_by_id:
@@ -505,6 +558,71 @@ class App(QObject):
 
     def choose_read_leading(self, leading: str) -> None:
         self._choose_read_level("leading", leading)
+
+    def set_loaf_hidden(self, hidden: bool) -> None:
+        self._loaf_hidden = bool(hidden)
+        self._apply_loaf()
+        self._sync_loaf_tray()
+        self._persist_loaf()
+
+    def set_loaf_mode(self, mode: str) -> None:
+        if mode not in ("daily", "monthly") or mode == self._pay.pay_mode:
+            self._sync_loaf_tray()
+            return
+        self._pay = replace(self._pay, pay_mode=mode)
+        self._sync_loaf()
+
+    def set_loaf_amount(self, mode: str, text: str, unit: str) -> None:
+        try:
+            amount = Decimal(text)
+        except InvalidOperation:
+            return
+        if amount < 0:
+            return
+        if mode == "monthly":
+            self._pay = replace(self._pay, monthly_amount=amount, unit=unit)
+        else:
+            self._pay = replace(self._pay, daily_amount=amount, unit=unit)
+        self._sync_loaf()
+
+    def set_loaf_display(self, display: str) -> None:
+        if display == self._pay.display:
+            self._sync_loaf_tray()
+            return
+        self._pay = replace(self._pay, display=display)
+        self._sync_loaf()
+
+    def set_loaf_look(self, look_id: str) -> None:
+        chosen = loaf_look(look_id).look_id
+        if chosen == self._loaf_look:
+            self._sync_loaf_tray()
+            return
+        self._loaf_look = chosen
+        if self._loaf is not None:
+            self._loaf.apply_look(loaf_look(chosen))
+            self._place_loaf()
+        self._sync_loaf()
+
+    def edit_work_span(self) -> None:
+        dialog = WorkSpanDialog(
+            _clock_text(self._pay.work_start),
+            _clock_text(self._pay.work_end),
+            _clock_text(self._pay.lunch_start),
+            _clock_text(self._pay.lunch_end),
+        )
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        result = dialog.commit()
+        if not result.ok:
+            return
+        self._pay = replace(
+            self._pay,
+            work_start=result.work_start,
+            work_end=result.work_end,
+            lunch_start=result.lunch_start,
+            lunch_end=result.lunch_end,
+        )
+        self._sync_loaf()
 
     def quit(self) -> None:
         self._take_pending_slay()
@@ -753,6 +871,120 @@ class App(QObject):
         if persist:
             self._persist()
 
+    def _sync_loaf(self) -> None:
+        self._sync_loaf_tray()
+        self._ensure_rates()
+        self._apply_loaf()
+        self._persist_loaf()
+
+    def _sync_loaf_tray(self) -> None:
+        self._tray.set_loaf(
+            self._pay.pay_mode,
+            self._pay.unit,
+            self._pay.display,
+            self._loaf_hidden,
+            format(self._pay.daily_amount, "f"),
+            format(self._pay.monthly_amount, "f"),
+            self._loaf_look,
+        )
+
+    def _apply_loaf(self) -> None:
+        if self._loaf_hidden or self._suppressed:
+            self._close_loaf()
+            return
+        if self._loaf is None:
+            self._open_loaf()
+            return
+        self._loaf.apply_palette(self._palette())
+        self._refresh_loaf()
+
+    def _open_loaf(self) -> bool:
+        self._close_loaf()
+        strip = WageStrip()
+        strip.apply_look(loaf_look(self._loaf_look))
+        strip.apply_palette(self._palette())
+        strip.apply_layer(self._floating)
+        strip.set_line(self._loaf_line())
+        strip.moved.connect(lambda x, y: self._move_loaf(x, y, False))
+        strip.move_finished.connect(lambda x, y: self._move_loaf(x, y, True))
+        strip.winId()
+        if not self._host.prepare(strip, self._floating):
+            strip.close()
+            strip.deleteLater()
+            if not self._floating:
+                self._notify_embed_failed()
+            return False
+        origin = self._loaf_origin or self._default_loaf_origin()
+        self._loaf_origin = self._host.move(strip, origin[0], origin[1])
+        strip.show()
+        self._loaf = strip
+        self._loaf_timer.start()
+        return True
+
+    def _close_loaf(self) -> None:
+        self._loaf_timer.stop()
+        if self._loaf is None:
+            return
+        self._loaf.hide()
+        self._loaf.close()
+        self._loaf.deleteLater()
+        self._loaf = None
+
+    def _refresh_loaf(self) -> None:
+        if self._loaf is None:
+            return
+        text = self._loaf_line()
+        if text == self._loaf.line():
+            return
+        self._loaf.set_line(text)
+        self._place_loaf()
+
+    def _place_loaf(self) -> None:
+        if self._loaf is None:
+            return
+        origin = self._loaf_origin or self._default_loaf_origin()
+        self._loaf_origin = self._host.move(self._loaf, origin[0], origin[1])
+
+    def _move_loaf(self, x: int, y: int, persist: bool) -> None:
+        if self._loaf is None:
+            return
+        self._loaf_origin = self._host.move(self._loaf, x, y)
+        if persist:
+            self._persist_loaf()
+
+    def _default_loaf_origin(self) -> tuple[int, int]:
+        work = self._host.work_rect()
+        return (work.left() + 24, work.top() + 24)
+
+    def _loaf_line(self) -> str:
+        return strip_text(self._pay, datetime.now(), self._fx_rates)
+
+    def _ensure_rates(self) -> None:
+        if self._closing or self._pay.display == self._pay.unit:
+            return
+        today = date.today().isoformat()
+        if self._fx_attempted == today or self._fx_thread is not None:
+            return
+        self._fx_attempted = today
+        self._store.save_fx(today, None)
+        job = _RateFetch(self)
+        job.loaded.connect(self._on_rates)
+        job.finished.connect(job.deleteLater)
+        self._fx_thread = job
+        job.start()
+
+    def _on_rates(self, rates: object) -> None:
+        self._fx_thread = None
+        if self._closing or not isinstance(rates, dict):
+            self._refresh_loaf()
+            return
+        self._fx_rates = rates
+        self._store.save_fx(
+            self._fx_attempted,
+            {str(key): format(value, "f") for key, value in rates.items()},
+        )
+        self._refresh_loaf()
+
     def _persist(self) -> None:
         self._store.save_state(
             AppState(
@@ -787,6 +1019,25 @@ class App(QObject):
                 spell_tray=self._spell.tray_unlocked,
                 spell_misses=self._spell.miss_count,
                 spell_example_open=self._spell.example_open,
+            )
+        )
+        self._persist_loaf()
+
+    def _persist_loaf(self) -> None:
+        self._store.save_loaf(
+            LoafRecord(
+                hidden=self._loaf_hidden,
+                pay_mode=self._pay.pay_mode,
+                daily_amount=format(self._pay.daily_amount, "f"),
+                monthly_amount=format(self._pay.monthly_amount, "f"),
+                unit=self._pay.unit,
+                display=self._pay.display,
+                work_start=self._pay.work_start,
+                work_end=self._pay.work_end,
+                lunch_start=self._pay.lunch_start,
+                lunch_end=self._pay.lunch_end,
+                origin=self._loaf_origin,
+                look=self._loaf_look,
             )
         )
 
@@ -830,6 +1081,8 @@ class App(QObject):
     def _apply_style(self) -> None:
         if self._card is not None:
             self._card.apply_palette(self._palette())
+        if self._loaf is not None:
+            self._loaf.apply_palette(self._palette())
 
     def _palette(self):
         return palette_for(
@@ -841,6 +1094,7 @@ class App(QObject):
         )
 
     def _check_day(self) -> None:
+        self._ensure_rates()
         if self._burning:
             return
         today = _today()
@@ -860,10 +1114,13 @@ class App(QObject):
             self._embed_notified = True
 
     def _teardown(self) -> None:
+        self._closing = True
         self._take_pending_slay()
         self._persist()
         self._hotkey.stop()
         self._day_timer.stop()
+        self._loaf_timer.stop()
+        self._close_loaf()
         self._destroy_windows()
         self._store.close()
 
@@ -1040,6 +1297,48 @@ def _pick_source(sources: list[VocabSource], wanted: str) -> str:
     if wanted in ids:
         return wanted
     return sources[0].source_id
+
+
+def _clock_text(minute: Optional[int]) -> str:
+    if minute is None:
+        return ""
+    return format_clock(minute)
+
+
+def _pay_from(record: LoafRecord) -> PaySettings:
+    return PaySettings(
+        pay_mode=record.pay_mode,
+        daily_amount=_money(record.daily_amount),
+        monthly_amount=_money(record.monthly_amount),
+        unit=record.unit,
+        display=record.display,
+        work_start=record.work_start,
+        work_end=record.work_end,
+        lunch_start=record.lunch_start,
+        lunch_end=record.lunch_end,
+    )
+
+
+def _money(text: str) -> Decimal:
+    try:
+        amount = Decimal(text)
+    except InvalidOperation:
+        return Decimal(0)
+    if amount < 0:
+        return Decimal(0)
+    return amount
+
+
+def _rates_from(raw: dict[str, str]) -> dict[str, Decimal]:
+    rates: dict[str, Decimal] = {}
+    for key, value in raw.items():
+        try:
+            rate = Decimal(value)
+        except InvalidOperation:
+            continue
+        if rate > 0:
+            rates[key] = rate
+    return rates
 
 
 def _set_app_id() -> None:

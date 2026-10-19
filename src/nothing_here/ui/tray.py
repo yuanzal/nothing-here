@@ -7,7 +7,9 @@ from PyQt6.QtGui import QAction, QActionGroup, QColor, QFont, QIcon, QPainter, Q
 from PyQt6.QtWidgets import QColorDialog, QInputDialog, QMenu, QMessageBox, QSystemTrayIcon
 
 from nothing_here.domain.daily import GOAL_MAX, GOAL_MIN
-from nothing_here.vocab.protocol import VocabSource
+from nothing_here.domain.loaf import CURRENCY_LABELS
+from nothing_here.domain.loaf_look import LOOKS
+from nothing_here.ui.pay_dialog import PayAmountDialog
 
 _CARD_LEVELS = (("large", "大"), ("medium", "中"), ("small", "小"))
 _LEADING_LEVELS = (("loose", "大"), ("medium", "中"), ("tight", "小"))
@@ -31,6 +33,13 @@ class Tray(QObject):
     read_card_chosen = pyqtSignal(str)
     read_font_chosen = pyqtSignal(str)
     read_leading_chosen = pyqtSignal(str)
+    loaf_hidden_chosen = pyqtSignal(bool)
+    loaf_mode_chosen = pyqtSignal(str)
+    loaf_amount_chosen = pyqtSignal(str, str, str)
+    loaf_display_chosen = pyqtSignal(str)
+    loaf_look_chosen = pyqtSignal(str)
+    loaf_work_chosen = pyqtSignal()
+    suppress_chosen = pyqtSignal()
 
     def __init__(
         self,
@@ -63,11 +72,17 @@ class Tray(QObject):
         self._spell_tray = spell_tray
         self._current_book = current_book
         self._book_titles: dict[str, str] = {}
+        self._loaf_mode = "daily"
+        self._loaf_unit = "CNY"
+        self._loaf_display = "CNY"
+        self._loaf_daily = "0"
+        self._loaf_monthly = "0"
         self._icon = QSystemTrayIcon(make_tray_icon())
         self._icon.setToolTip("Nothing Here")
         menu = QMenu()
         show_action = menu.addAction("显示卡片")
-        hide_action = menu.addAction("隐藏卡片    Ctrl+Alt+S")
+        hide_action = menu.addAction("隐藏卡片")
+        suppress_action = menu.addAction("全部隐藏    Ctrl+Alt+S")
         self._book_menu = menu.addMenu("书籍")
         self._card_menu = menu.addMenu("卡片大小")
         self._font_menu = menu.addMenu("字号")
@@ -87,6 +102,10 @@ class Tray(QObject):
         self._light_action.setCheckable(True)
         self._dark_action.setCheckable(True)
         custom_action = style_menu.addAction("自定义…")
+        self._float_action = menu.addAction("浮在窗口上")
+        self._float_action.setCheckable(True)
+        self._float_action.setChecked(floating)
+        self._float_action.triggered.connect(self.layer_chosen.emit)
         vocab_menu = menu.addMenu("词库")
         self._group = QActionGroup(menu)
         self._group.setExclusive(True)
@@ -115,14 +134,12 @@ class Tray(QObject):
         self._exam_action.setCheckable(True)
         self._exam_action.setToolTip("暂不可用")
         menu.addSeparator()
-        self._float_action = menu.addAction("浮在窗口上")
-        self._float_action.setCheckable(True)
-        self._float_action.setChecked(floating)
-        self._float_action.triggered.connect(self.layer_chosen.emit)
+        self._build_loaf_menu(menu)
         menu.addSeparator()
         quit_action = menu.addAction("退出")
         show_action.triggered.connect(self.show_cards.emit)
         hide_action.triggered.connect(self.hide_cards.emit)
+        suppress_action.triggered.connect(self.suppress_chosen.emit)
         self._goal_action.triggered.connect(self._edit_goal)
         self._light_action.triggered.connect(lambda _checked=False: self._pick_preset("light"))
         self._dark_action.triggered.connect(lambda _checked=False: self._pick_preset("dark"))
@@ -206,6 +223,70 @@ class Tray(QObject):
         self._dark_action.setChecked(preset == "dark")
         self._light_action.blockSignals(False)
         self._dark_action.blockSignals(False)
+
+    def _build_loaf_menu(self, menu: QMenu) -> None:
+        loaf = menu.addMenu("摸鱼计时")
+        pay = loaf.addMenu("设置薪资")
+        daily = pay.addMenu("日薪")
+        monthly = pay.addMenu("月薪")
+        self._loaf_daily_mode = daily.addAction("用日薪计算")
+        self._loaf_monthly_mode = monthly.addAction("用月薪计算")
+        for action in (self._loaf_daily_mode, self._loaf_monthly_mode):
+            action.setCheckable(True)
+        self._loaf_mode_group = QActionGroup(menu)
+        self._loaf_mode_group.setExclusive(True)
+        self._loaf_mode_group.addAction(self._loaf_daily_mode)
+        self._loaf_mode_group.addAction(self._loaf_monthly_mode)
+        self._loaf_daily_mode.setChecked(True)
+        self._loaf_daily_mode.triggered.connect(
+            lambda checked: self.loaf_mode_chosen.emit("daily") if checked else None
+        )
+        self._loaf_monthly_mode.triggered.connect(
+            lambda checked: self.loaf_mode_chosen.emit("monthly") if checked else None
+        )
+        daily.addAction("金额…").triggered.connect(lambda _checked=False: self._edit_loaf_amount("daily"))
+        monthly.addAction("金额…").triggered.connect(lambda _checked=False: self._edit_loaf_amount("monthly"))
+        self._loaf_displays = _currency_menu(loaf, "货币显示", self.loaf_display_chosen)
+        self._loaf_looks = _exclusive_levels(loaf.addMenu("风格"), tuple((look.look_id, look.label) for look in LOOKS), "plain", self.loaf_look_chosen)
+        loaf.addAction("设置工作时长").triggered.connect(self.loaf_work_chosen.emit)
+        self._loaf_hide = loaf.addAction("隐藏")
+        self._loaf_hide.setCheckable(True)
+        self._loaf_hide.triggered.connect(self.loaf_hidden_chosen.emit)
+
+    def set_loaf(
+        self,
+        pay_mode: str,
+        unit: str,
+        display: str,
+        hidden: bool,
+        daily_amount: str,
+        monthly_amount: str,
+        look: str,
+    ) -> None:
+        self._loaf_mode = "monthly" if pay_mode == "monthly" else "daily"
+        self._loaf_unit = unit
+        self._loaf_display = display
+        self._loaf_daily = daily_amount
+        self._loaf_monthly = monthly_amount
+        self._loaf_daily_mode.blockSignals(True)
+        self._loaf_monthly_mode.blockSignals(True)
+        self._loaf_hide.blockSignals(True)
+        self._loaf_daily_mode.setChecked(self._loaf_mode == "daily")
+        self._loaf_monthly_mode.setChecked(self._loaf_mode == "monthly")
+        self._loaf_hide.setChecked(hidden)
+        self._loaf_daily_mode.blockSignals(False)
+        self._loaf_monthly_mode.blockSignals(False)
+        self._loaf_hide.blockSignals(False)
+        _check_only(self._loaf_displays, display)
+        _check_only(self._loaf_looks, look)
+
+    def _edit_loaf_amount(self, mode: str) -> None:
+        title = "日薪" if mode == "daily" else "月薪"
+        current = self._loaf_daily if mode == "daily" else self._loaf_monthly
+        dialog = PayAmountDialog(title, current, self._loaf_unit)
+        if dialog.exec() != dialog.DialogCode.Accepted:
+            return
+        self.loaf_amount_chosen.emit(mode, dialog.amount(), dialog.unit())
 
     def set_surface(self, surface_id: str) -> None:
         self._surface = "read" if surface_id == "read" else "word"
@@ -327,6 +408,21 @@ class Tray(QObject):
         for key, label in self._slain_items:
             action = self._recycle_menu.addAction(label)
             action.triggered.connect(lambda _checked=False, word=key: self.restore_chosen.emit(word))
+
+
+def _currency_menu(parent: QMenu, title: str, signal) -> dict[str, QAction]:
+    menu = parent.addMenu(title)
+    group = QActionGroup(menu)
+    group.setExclusive(True)
+    actions: dict[str, QAction] = {}
+    for code, label in CURRENCY_LABELS:
+        action = menu.addAction(label)
+        action.setCheckable(True)
+        action.setChecked(code == "CNY")
+        group.addAction(action)
+        actions[code] = action
+        action.triggered.connect(lambda checked, chosen=code: signal.emit(chosen) if checked else None)
+    return actions
 
 
 def _exclusive_levels(menu: QMenu, levels: Sequence[tuple[str, str]], current: str, signal) -> dict[str, QAction]:
