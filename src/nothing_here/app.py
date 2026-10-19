@@ -10,7 +10,6 @@ from pathlib import Path
 from typing import Optional
 
 from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
-from PyQt6.QtNetwork import QLocalServer, QLocalSocket
 from PyQt6.QtWidgets import QApplication, QFileDialog
 
 from nothing_here.desktop.host import DesktopHost
@@ -57,7 +56,8 @@ from nothing_here.vocab.examples import EntryExampleSource, load_example_sources
 from nothing_here.vocab.protocol import Entry, VocabSource
 from nothing_here.vocab.registry import catalog_from, load_sources
 
-INSTANCE_NAME = "nothing-here"
+INSTANCE_NAME = "Local\\NothingHere"
+_ERROR_ALREADY_EXISTS = 183
 MIN_FRONT_HEIGHT = 96
 
 
@@ -1359,17 +1359,31 @@ def _set_app_id() -> None:
     ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("NothingHere")
 
 
-def acquire_instance() -> Optional[QLocalServer]:
-    probe = QLocalSocket()
-    probe.connectToServer(INSTANCE_NAME)
-    if probe.waitForConnected(150):
-        probe.disconnectFromServer()
+class _SingleInstance:
+    """进程活着就握着这把互斥量。系统在进程退出或崩溃时放开。"""
+
+    def __init__(self, handle: int) -> None:
+        self._handle = handle
+
+    def close(self) -> None:
+        if not self._handle:
+            return
+        ctypes.windll.kernel32.CloseHandle(self._handle)
+        self._handle = 0
+
+
+def acquire_instance(name: str = INSTANCE_NAME) -> Optional[_SingleInstance]:
+    """同一 Windows 会话里只留一个进程。创建互斥量是原子的，两个进程一起启动也不会都通过。"""
+    kernel32 = ctypes.windll.kernel32
+    kernel32.CreateMutexW.argtypes = [ctypes.c_void_p, ctypes.c_bool, ctypes.c_wchar_p]
+    kernel32.CreateMutexW.restype = ctypes.c_void_p
+    kernel32.SetLastError(0)
+    handle = kernel32.CreateMutexW(None, False, name)
+    if not handle or kernel32.GetLastError() == _ERROR_ALREADY_EXISTS:
+        if handle:
+            kernel32.CloseHandle(handle)
         return None
-    QLocalServer.removeServer(INSTANCE_NAME)
-    server = QLocalServer()
-    if not server.listen(INSTANCE_NAME):
-        return None
-    return server
+    return _SingleInstance(int(handle))
 
 
 def main() -> int:
@@ -1377,10 +1391,10 @@ def main() -> int:
     qt_app = QApplication(sys.argv)
     qt_app.setApplicationName("Nothing Here")
     qt_app.setQuitOnLastWindowClosed(False)
-    server = acquire_instance()
-    if server is None:
+    instance = acquire_instance()
+    if instance is None:
         return 0
     app = App(qt_app)
-    app._server = server  # noqa: SLF001 — keep the named pipe alive
+    app._instance = instance  # noqa: SLF001 — 进程结束前不放开互斥量
     app.start()
     return qt_app.exec()

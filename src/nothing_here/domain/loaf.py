@@ -122,7 +122,7 @@ def strip_text(
         return "休息中"
     amount = accrued(settings, moment)
     shown, currency = project(amount, settings.unit, settings.display, per_eur)
-    return f"你已摸鱼{SYMBOLS[currency]}{_format_amount(shown, currency)}"
+    return f"你已摸鱼 {SYMBOLS[currency]}{_format_amount(shown, currency)}"
 
 
 def accrued(settings: PaySettings, moment: datetime) -> Decimal:
