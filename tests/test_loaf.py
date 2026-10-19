@@ -177,7 +177,8 @@ class SkinTests(unittest.TestCase):
         self.assertEqual(plain.label, "极简无痕")
         self.assertEqual([mode.mode_id for mode in plain.color_modes], ["light", "dark", "custom"])
         self.assertIs(skin_for("cute"), plain)
-        self.assertGreaterEqual(plain.strip_metrics.min_width, 240)
+        self.assertLessEqual(plain.strip_metrics.pad_x, 12)
+        self.assertEqual(plain.strip_metrics.min_width, 1)
 
 
 if __name__ == "__main__":

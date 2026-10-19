@@ -85,10 +85,10 @@ class PlainSkin:
     )
     strip_metrics = StripMetrics(
         font_px=16,
-        pad_x=36,
-        pad_y=22,
-        min_width=240,
-        min_height=72,
+        pad_x=10,
+        pad_y=8,
+        min_width=1,
+        min_height=1,
     )
 
     def palette(

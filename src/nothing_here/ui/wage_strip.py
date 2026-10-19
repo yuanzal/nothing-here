@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QPoint, Qt, pyqtSignal
-from PyQt6.QtGui import QFont, QPainter
+from PyQt6.QtGui import QColor, QFont, QPainter
 from PyQt6.QtWidgets import QLabel, QWidget
 
 from nothing_here.ui.skins import Skin, skin_for
@@ -74,6 +74,10 @@ class WageStrip(QWidget):
         del event
         painter = QPainter(self)
         self._look.paint_backdrop(painter, self.rect(), self._palette)
+        # 极简无痕的底是全透明的，Windows 上点不到。铺一层几乎看不见的底，
+        # 让整行文字（含一点内边距）都能拖，并且和贴边用的窗口一样大。
+        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
+        painter.fillRect(self.rect(), QColor(0, 0, 0, 1))
 
     def apply_layer(self, floating: bool) -> None:
         flags = (
