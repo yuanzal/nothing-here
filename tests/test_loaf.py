@@ -41,50 +41,50 @@ def _at(hour: int, minute: int, second: int = 0) -> datetime:
 class AccrualTests(unittest.TestCase):
     def test_unset_work_or_pay_stays_zero(self) -> None:
         unpaid = _pay(daily_amount=Decimal(0))
-        self.assertEqual(strip_text(unpaid, _at(12, 0)), "你已摸鱼￥0.00")
+        self.assertEqual(strip_text(unpaid, _at(12, 0)), "你已摸鱼 ￥0.00")
         untimed = _pay(work_start=None, work_end=None)
-        self.assertEqual(strip_text(untimed, _at(12, 0)), "你已摸鱼￥0.00")
-        self.assertEqual(strip_text(_pay(), _at(8, 59, 59)), "你已摸鱼￥0.00")
+        self.assertEqual(strip_text(untimed, _at(12, 0)), "你已摸鱼 ￥0.00")
+        self.assertEqual(strip_text(_pay(), _at(8, 59, 59)), "你已摸鱼 ￥0.00")
 
     def test_midday_and_after_work_without_lunch(self) -> None:
         # 09:00–18:00，11:00 走过 2/9
-        self.assertEqual(strip_text(_pay(), _at(11, 0)), "你已摸鱼￥22.22")
-        self.assertEqual(strip_text(_pay(), _at(18, 0)), "你已摸鱼￥100.00")
-        self.assertEqual(strip_text(_pay(), _at(20, 0)), "你已摸鱼￥100.00")
+        self.assertEqual(strip_text(_pay(), _at(11, 0)), "你已摸鱼 ￥22.22")
+        self.assertEqual(strip_text(_pay(), _at(18, 0)), "你已摸鱼 ￥100.00")
+        self.assertEqual(strip_text(_pay(), _at(20, 0)), "你已摸鱼 ￥100.00")
 
     def test_lunch_is_excluded_and_shows_rest(self) -> None:
         settings = _pay(lunch_start=12 * 60, lunch_end=13 * 60)
         self.assertEqual(strip_text(settings, _at(12, 30)), "休息中")
         # 可计 8 小时，13:00 已计上午 3 小时
-        self.assertEqual(strip_text(settings, _at(13, 0)), "你已摸鱼￥37.50")
-        self.assertEqual(strip_text(settings, _at(18, 0)), "你已摸鱼￥100.00")
+        self.assertEqual(strip_text(settings, _at(13, 0)), "你已摸鱼 ￥37.50")
+        self.assertEqual(strip_text(settings, _at(18, 0)), "你已摸鱼 ￥100.00")
 
     def test_lunch_may_touch_the_shift_edge_but_not_replace_it(self) -> None:
         edge = _pay(lunch_start=9 * 60, lunch_end=10 * 60)
         self.assertEqual(strip_text(edge, _at(9, 30)), "休息中")
-        self.assertEqual(strip_text(edge, _at(8, 0)), "你已摸鱼￥0.00")
+        self.assertEqual(strip_text(edge, _at(8, 0)), "你已摸鱼 ￥0.00")
         full = _pay(lunch_start=9 * 60, lunch_end=18 * 60)
         self.assertEqual(strip_text(full, _at(12, 0)), "休息中")
-        self.assertEqual(strip_text(full, _at(18, 0)), "你已摸鱼￥0.00")
+        self.assertEqual(strip_text(full, _at(18, 0)), "你已摸鱼 ￥0.00")
 
     def test_monthly_uses_21_75_and_recomputes_from_the_new_rate(self) -> None:
         monthly = _pay(pay_mode="monthly", monthly_amount=Decimal("2175"), daily_amount=Decimal("1"))
-        self.assertEqual(strip_text(monthly, _at(18, 0)), "你已摸鱼￥100.00")
+        self.assertEqual(strip_text(monthly, _at(18, 0)), "你已摸鱼 ￥100.00")
         raised = _pay(daily_amount=Decimal("200"))
-        self.assertEqual(strip_text(raised, _at(18, 0)), "你已摸鱼￥200.00")
+        self.assertEqual(strip_text(raised, _at(18, 0)), "你已摸鱼 ￥200.00")
 
     def test_currency_conversion_rounds_half_up_and_falls_back(self) -> None:
         rates = {"CNY": Decimal("7.5"), "USD": Decimal("1.5"), "JPY": Decimal("150"), "KRW": Decimal("1500"), "SGD": Decimal("1.5")}
         usd = _pay(display="USD")
         # 100 CNY = 100/7.5 EUR = 20 USD
-        self.assertEqual(strip_text(usd, _at(18, 0), rates), "你已摸鱼$20.00")
+        self.assertEqual(strip_text(usd, _at(18, 0), rates), "你已摸鱼 $20.00")
         yen = _pay(unit="JPY", display="JPY", daily_amount=Decimal("100"))
-        self.assertEqual(strip_text(yen, _at(11, 0)), "你已摸鱼円22")
+        self.assertEqual(strip_text(yen, _at(11, 0)), "你已摸鱼 円22")
         half = _pay(unit="JPY", display="JPY", daily_amount=Decimal("9"))
         # 09:00–18:00 的一半是 13:30，4.5 日元四舍五入到 5。2/9*9 = 2
-        self.assertEqual(strip_text(half, _at(13, 30)), "你已摸鱼円5")
-        self.assertEqual(strip_text(usd, _at(18, 0), None), "你已摸鱼￥100.00")
-        self.assertEqual(strip_text(usd, _at(18, 0), {"USD": Decimal("1.5")}), "你已摸鱼￥100.00")
+        self.assertEqual(strip_text(half, _at(13, 30)), "你已摸鱼 円5")
+        self.assertEqual(strip_text(usd, _at(18, 0), None), "你已摸鱼 ￥100.00")
+        self.assertEqual(strip_text(usd, _at(18, 0), {"USD": Decimal("1.5")}), "你已摸鱼 ￥100.00")
 
     def test_clock_and_amount_parsing(self) -> None:
         self.assertEqual(parse_clock("09:00"), 9 * 60)

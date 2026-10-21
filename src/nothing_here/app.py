@@ -51,7 +51,7 @@ from nothing_here.ui.read_window import READ_CARD_SIZE, READ_FONT_PX, READ_LEADI
 from nothing_here.ui.skins import skin_for
 from nothing_here.ui.tray import Tray
 from nothing_here.ui.wage_strip import WageStrip
-from nothing_here.ui.work_span_dialog import WorkSpanDialog
+from nothing_here.ui.work_status_dialog import WorkStatusDialog
 from nothing_here.vocab.examples import EntryExampleSource, load_example_sources, resolve_example
 from nothing_here.vocab.protocol import Entry, VocabSource
 from nothing_here.vocab.registry import catalog_from, load_sources
@@ -195,10 +195,8 @@ class App(QObject):
         self._tray.read_font_chosen.connect(self.choose_read_font)
         self._tray.read_leading_chosen.connect(self.choose_read_leading)
         self._tray.loaf_hidden_chosen.connect(self.set_loaf_hidden)
-        self._tray.loaf_mode_chosen.connect(self.set_loaf_mode)
-        self._tray.loaf_amount_chosen.connect(self.set_loaf_amount)
         self._tray.loaf_display_chosen.connect(self.set_loaf_display)
-        self._tray.loaf_work_chosen.connect(self.edit_work_span)
+        self._tray.loaf_status_chosen.connect(self.edit_work_status)
         self._tray.skin_chosen.connect(self.set_skin)
         self._tray.suppress_chosen.connect(self.toggle_visibility)
         self._tray.set_skin(self._skin_id)
@@ -589,26 +587,6 @@ class App(QObject):
         self._sync_loaf_tray()
         self._persist_loaf()
 
-    def set_loaf_mode(self, mode: str) -> None:
-        if mode not in ("daily", "monthly") or mode == self._pay.pay_mode:
-            self._sync_loaf_tray()
-            return
-        self._pay = replace(self._pay, pay_mode=mode)
-        self._sync_loaf()
-
-    def set_loaf_amount(self, mode: str, text: str, unit: str) -> None:
-        try:
-            amount = Decimal(text)
-        except InvalidOperation:
-            return
-        if amount < 0:
-            return
-        if mode == "monthly":
-            self._pay = replace(self._pay, monthly_amount=amount, unit=unit)
-        else:
-            self._pay = replace(self._pay, daily_amount=amount, unit=unit)
-        self._sync_loaf()
-
     def set_loaf_display(self, display: str) -> None:
         if display == self._pay.display:
             self._sync_loaf_tray()
@@ -616,8 +594,12 @@ class App(QObject):
         self._pay = replace(self._pay, display=display)
         self._sync_loaf()
 
-    def edit_work_span(self) -> None:
-        dialog = WorkSpanDialog(
+    def edit_work_status(self) -> None:
+        dialog = WorkStatusDialog(
+            self._pay.pay_mode,
+            format(self._pay.daily_amount, "f"),
+            format(self._pay.monthly_amount, "f"),
+            self._pay.unit,
             _clock_text(self._pay.work_start),
             _clock_text(self._pay.work_end),
             _clock_text(self._pay.lunch_start),
@@ -630,6 +612,10 @@ class App(QObject):
             return
         self._pay = replace(
             self._pay,
+            pay_mode=dialog.pay_mode(),
+            daily_amount=Decimal(dialog.daily_amount()),
+            monthly_amount=Decimal(dialog.monthly_amount()),
+            unit=dialog.unit(),
             work_start=result.work_start,
             work_end=result.work_end,
             lunch_start=result.lunch_start,
@@ -891,14 +877,7 @@ class App(QObject):
         self._persist_loaf()
 
     def _sync_loaf_tray(self) -> None:
-        self._tray.set_loaf(
-            self._pay.pay_mode,
-            self._pay.unit,
-            self._pay.display,
-            self._loaf_hidden,
-            format(self._pay.daily_amount, "f"),
-            format(self._pay.monthly_amount, "f"),
-        )
+        self._tray.set_loaf(self._pay.display, self._loaf_hidden)
 
     def _apply_loaf(self) -> None:
         if self._loaf_hidden or self._suppressed:
