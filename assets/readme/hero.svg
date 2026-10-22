@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="1200" height="400" viewBox="0 0 1200 400"
+     role="img" aria-labelledby="title desc">
+  <title id="title">Nothing Here</title>
+  <desc id="desc">Windows desktop frameless transparent card for vocab, reading, and a wage strip.</desc>
+
+  <defs>
+    <clipPath id="stage">
+      <rect width="1200" height="400" rx="26"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#stage)">
+    <rect width="1200" height="400" fill="#E8E0D0"/>
+
+    <g fill="#C9BBA8" opacity="0.45">
+      <rect x="640" y="48" width="44" height="36" rx="6"/>
+      <rect x="700" y="48" width="44" height="36" rx="6"/>
+      <rect x="760" y="48" width="44" height="36" rx="6"/>
+      <rect x="1088" y="48" width="44" height="36" rx="6"/>
+      <rect x="1148" y="48" width="44" height="36" rx="6"/>
+      <rect x="640" y="108" width="44" height="36" rx="6"/>
+      <rect x="700" y="108" width="44" height="36" rx="6"/>
+      <rect x="1148" y="108" width="44" height="36" rx="6"/>
+    </g>
+
+    <g id="title-block" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif">
+      <text x="56" y="78" fill="#6F675E" font-size="18" letter-spacing="2.2">WINDOWS · 桌面卡片</text>
+      <text x="56" y="148" fill="#1C1C1C" font-size="56" font-weight="700">Nothing Here</text>
+      <text x="56" y="196" fill="#1C1C1C" font-size="22">贴在壁纸层的无边框透明卡。</text>
+      <text x="56" y="228" fill="#1C1C1C" font-size="22">单词、阅读、薪条共用一张桌面。</text>
+      <text x="56" y="278" fill="#6F675E" font-size="18" font-family="ui-monospace, Cascadia Mono, Segoe UI, monospace">本机 SQLite · 单实例 · Ctrl+Alt+S</text>
+    </g>
+
+    <g id="project-proof" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif">
+      <text x="760" y="188" fill="#1C1C1C" font-size="36" font-weight="700">abandon</text>
+      <text x="760" y="224" fill="#3A3A3A" font-size="20">/əˈbændən/</text>
+      <text x="760" y="292" fill="#1C1C1C" font-size="22">你已摸鱼 CNY￥22.22</text>
+    </g>
+
+    <g id="tray-mark" transform="translate(56, 318)">
+      <rect width="52" height="52" rx="12" fill="#1C1C1C" fill-opacity="0.92"/>
+      <text x="26" y="36" text-anchor="middle" fill="#F5F5F5"
+            font-family="Segoe UI, sans-serif" font-size="26" font-weight="600">N</text>
+    </g>
+    <text x="122" y="350" fill="#6F675E" font-family="Segoe UI, PingFang SC, Microsoft YaHei, sans-serif" font-size="18">托盘 · Nothing Here</text>
+  </g>
+</svg>

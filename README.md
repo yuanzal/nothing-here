@@ -1,10 +1,14 @@
-# Nothing Here
+<p align="center">
+  <img src="./assets/readme/hero.svg" width="100%" alt="Nothing Here：贴在 Windows 壁纸层的无边框透明卡片，单词、阅读和摸鱼薪条共用一张桌面">
+</p>
 
-**Windows 桌面上的工作时摸鱼容器** — 无边框透明卡片，多种「功能面」共用同一张卡。现在可用的是**单词**（含拼写测试）和**阅读**；托盘里的**考试**仍是预留入口。
+Nothing Here 不是全屏背单词 App。它是贴在壁纸层（或浮在窗口上）的轻量卡片；学习记录只落在本机。托盘名称是 **Nothing Here**（任务栏不出现「背单词」「雅思」）。同一时间只运行一个实例。
 
-Nothing Here 不是全屏背单词 App，而是贴在壁纸层（或浮在窗口上）的轻量卡片；学习记录只落在本机。
+现在可用的功能面是**单词**（含拼写测试）和**阅读**。托盘里的**考试**仍是预留入口。
 
----
+<p align="center">
+  <img src="./assets/readme/workflow.svg" width="100%" alt="同一张卡：正面只看词，反面认识或不认识，薪条单独显示今日累计">
+</p>
 
 ## 现在能做什么
 
@@ -14,17 +18,15 @@ Nothing Here 不是全屏背单词 App，而是贴在壁纸层（或浮在窗口
 | **拼写测试** | 达标后可邀请进入；逐格输入 |
 | **每日目标** | 「不认识」收入名单，收满后按「目标 → 目标 → 熟词」轮换抽查 |
 | **斩杀与回收站** | 熟练词可移出抽卡池，托盘里恢复 |
-| **正反面** | 正面只看词；译文/例句后认识或不认识；`Ctrl+Alt+S` 显隐卡片 |
-| **风格** | 浅色、黑底白字、自定义文字色；底面透明 |
+| **正反面** | 正面只看词；译文/例句后认识或不认识；`Ctrl+Alt+S` 全部隐藏 |
+| **风格** | 极简无痕：浅色、黑底白字、自定义文字色；底面透明 |
 | **桌面嵌入** | 默认贴桌面图标层；可「浮在窗口上」 |
-| **阅读** | 导入 txt、md、html、epub、docx、odt、fb2，按页和章翻；卡片大小、字号、行距只作用于阅读 |
-| **摸鱼计时** | 薪条按工作时段累计今日薪资，可隐藏；货币显示按日牌价换算 |
+| **阅读** | 导入 txt、md、html、epub、docx、odt、fb2，按页和章翻 |
+| **摸鱼计时** | 薪条按工作时段累计今日薪资；货币显示按日牌价换算 |
 
-托盘名称是 **Nothing Here**（任务栏不出现「背单词」「雅思」）。同一时间只运行一个实例。
+操作说明：[`使用教程.md`](使用教程.md)。术语以 [`GLOSSARY.md`](GLOSSARY.md) 为准。
 
----
-
-## 环境要求
+## 环境
 
 - Windows 10 及以上
 - Python 3.9+（开发常用 3.12 / 3.14）
@@ -32,9 +34,7 @@ Nothing Here 不是全屏背单词 App，而是贴在壁纸层（或浮在窗口
 
 若前台有**管理员权限**程序占用全局热键，需用管理员身份启动，或先离开该程序。
 
----
-
-## 快速部署
+## 跑起来
 
 ```powershell
 git clone https://github.com/yuanzal/nothing-here.git
@@ -52,13 +52,9 @@ $env:PYTHONPATH = "src"
 .\.venv\Scripts\python.exe -m nothing_here
 ```
 
-系统托盘：深色圆角图标，悬停 **Nothing Here**。右键可显隐卡片、改每日目标、回收站、风格、功能面、词库等。
+系统托盘：深色圆角 **N**，悬停 **Nothing Here**。右键可显隐卡片、改每日目标、回收站、风格、功能面、词库、摸鱼计时。
 
 进度文件：`%APPDATA%\NothingHere\study.db`
-
-操作说明：[`使用教程.md`](使用教程.md)。
-
----
 
 ## 开发与测试
 
@@ -71,36 +67,31 @@ $env:QT_QPA_PLATFORM = "offscreen"
 ```
 src/nothing_here/
   app.py           # 组装、生命周期、单实例
-  domain/          # 权重、抽卡、每日目标、拼写规则（无 Qt / 无库）
+  domain/          # 权重、抽卡、每日目标、拼写、阅读、摸鱼（无 Qt / 无库）
   vocab/           # 词库协议、例句来源协议
   storage/         # SQLite
-  ui/              # 卡片、托盘
+  ui/              # 卡片、薪条、托盘
   desktop/         # Windows 桌面嵌入
   input/           # 全局热键、拼写键钩子
 data/*.json        # 词库 JSON
 scripts/           # 词库构建、例句填充（离线；运行时不联网）
 ```
 
-规格：[`开发文档.md`](开发文档.md)、[`需求变更.md`](需求变更.md)、[`需求变更-第1阶段.md`](需求变更-第1阶段.md)、[`需求变更-第2阶段.md`](需求变更-第2阶段.md)、[`需求变更-第3阶段.md`](需求变更-第3阶段.md)（阅读）、[`GLOSSARY.md`](GLOSSARY.md)。
+规格：[`开发文档.md`](开发文档.md)、[`需求变更.md`](需求变更.md)、[`需求变更-第1阶段.md`](需求变更-第1阶段.md)、[`需求变更-第2阶段.md`](需求变更-第2阶段.md)、[`需求变更-第3阶段.md`](需求变更-第3阶段.md)、[`GLOSSARY.md`](GLOSSARY.md)。
 
----
-
-## 扩展性一览
+## 扩展性
 
 | 扩展点 | 现在好不好扩 | 说明 |
 | --- | --- | --- |
-| **词库** | 好扩 | `VocabSource` 协议 + `load_sources()` 注册表；加 JSON 或自写实现即可 |
-| **例句来源** | 好扩 | `ExampleSource` 协议；可串联多个来源，先命中先用 |
-| **功能面** | 单词、阅读可用 | 考试仍只是菜单口；没有统一的 Surface 注册表，新面要自己接 `app` / `ui` / `domain` |
-| **拼写测试** | 挂在单词面下 | 是单词功能面里的卡态，不是第四个功能面；规则在 `domain/spell.py` |
+| **词库** | 好扩 | `VocabSource` 协议 + `load_sources()`；加 JSON 或自写实现即可 |
+| **例句来源** | 好扩 | `ExampleSource` 协议；可串联，先命中先用 |
+| **功能面** | 单词、阅读可用 | 考试仍只是菜单口；没有统一的 Surface 注册表 |
+| **拼写测试** | 挂在单词面下 | 是单词功能面里的卡态，不是第四个功能面 |
 
-结论：**词库 / 例句已经是可插拔接口**；**新功能面还要自己接 `app` / `ui` / `domain`，不是注册一项就跑起来。**
+**词库 / 例句已经是可插拔接口**；**新功能面还要自己接 `app` / `ui` / `domain`，不是注册一项就跑起来。**
 
-术语以 [`GLOSSARY.md`](GLOSSARY.md) 为准：卡片、功能面、斩杀、拼写测试等。
-
----
-
-## 词库接口教程
+<details>
+<summary>词库接口</summary>
 
 ### 协议
 
@@ -188,70 +179,32 @@ class ExampleSource(Protocol):
 | `cet6` | 六级 | `data/cet6.json` | `cet6` |
 | `ky` | 考研 | `data/ky.json` | `ky` |
 
----
-
-## 增加功能面：现状与接口教程
-
-### 现状（诚实版）
-
-托盘「功能面」有「单词 / 阅读 / 考试」。`surface_id` 为 `word` 或 `read`。点「考试」仍会留在当前这一面。阅读的翻页规则在 `domain/read.py`，epub 等格式抽正文在 `domain/formats.py`，书和进度在 `storage`，卡片在 `ui/read_window.py`。
-
-卡片（`CardWindow`）、桌面嵌入、热键、风格是**容器级**能力；单词抽卡、打分、拼写都写在「单词」这条链路里（`domain/daily.py`、`domain/spell.py`、`app` 的 grade / render）。**还没有**类似 `VocabSource` 的 `Surface` 注册表。
-
-因此：预留的是产品与菜单口子，**不是**「实现一个类 + 注册一行就出新功能面」。
-
-### 若要真正加一个功能面（建议步骤）
-
-下面以「考试」为例，按现有分层做；细节以变更文档为准，做前先改规格再写代码。
-
-1. **定术语与规格**  
-   在 `GLOSSARY.md` 和对应 `需求变更-*.md` 写清：卡上有什么、和单词进度是否隔离、托盘项、持久化字段。
-
-2. **领域规则（可选独立模块）**  
-   在 `domain/` 增加纯函数 / 状态（不依赖 Qt、不直接碰 DB），并配 `tests/`。
-
-3. **持久化**  
-   若需要独立进度，在 `storage/db.py` 加表或列；`surface_id` 已有，业务数据另定。
-
-4. **卡片 UI**  
-   在 `ui/card_window.py` 增加该面的展示与按钮信号，或拆成子组件由 `CardWindow` 切换；容器行为（拖动、透明、嵌入）尽量复用。
-
-5. **托盘**  
-   在 `ui/tray.py` 把该项设为可用，`surface_chosen` 发出真实 `surface_id`（如 `"exam"`）。
-
-6. **组装**  
-   在 `app.py` 的 `choose_surface` / `_render` 按 `surface_id` 分支：换面时销毁或切换内容，避免单词态与新面串状态。拼写属于单词面，不要占新的 `surface_id`。
-
-7. **回归**  
-   显隐、浮层、换词库、跨日、单实例等仍应只作用于「当前面」或按规格明确忽略。
-
-在出现稳定的 `Surface` 协议之前，**每加一面都要改 `app` + `tray` + `card`**；这是有意保持单卡简单，而不是插件总线。
-
-### 和「拼写测试」的区别
-
-拼写是单词功能面下的**卡态**（邀请 / 拼写中），见 `需求变更-第2阶段.md`。扩展拼写规则改 `domain/spell.py` 与卡片拼写 UI 即可，不必新开功能面。
-
----
-
-## 词库与例句（运维）
-
 - 重建词库：`python scripts/build_ecdict.py path/to/ecdict.csv --all`
 - 补例句：`python scripts/example_sentences.py data/cet4.json data/cet6.json data/ky.json`  
   （会下载/使用 `data/cache/` 下的 Tatoeba 导出；该目录已 gitignore）
 - **应用运行时不访问网络。**
 
----
+</details>
 
-## 设计原则（摘要）
+<details>
+<summary>增加功能面</summary>
 
-- **本地优先**：进度、风格、位置、每日状态落 SQLite。  
-- **可测领域层**：`domain` 不依赖 PyQt、pynput 或具体 DB。  
-- **词库 / 例句可插拔**：协议 + 注册表。  
+托盘「功能面」有「单词 / 阅读 / 考试」。`surface_id` 为 `word` 或 `read`。点「考试」仍会留在当前这一面。阅读的翻页规则在 `domain/read.py`，epub 等格式抽正文在 `domain/formats.py`，书和进度在 `storage`，卡片在 `ui/read_window.py`。
+
+卡片（`CardWindow`）、桌面嵌入、热键、风格是**容器级**能力；单词抽卡、打分、拼写都写在「单词」这条链路里。**还没有**类似 `VocabSource` 的 `Surface` 注册表。预留的是产品与菜单口子，**不是**「实现一个类 + 注册一行就出新功能面」。
+
+若要真正加一面（以「考试」为例）：先在 `GLOSSARY.md` 和对应 `需求变更-*.md` 写清规格，再在 `domain/` 加纯规则、`storage` 加表、`ui` 加展示、`tray` 发出真实 `surface_id`，最后在 `app.py` 的 `choose_surface` / `_render` 分支。拼写属于单词面，不要占新的 `surface_id`。在出现稳定的 `Surface` 协议之前，**每加一面都要改 `app` + `tray` + `card`**。
+
+</details>
+
+## 设计原则
+
+- **本地优先**：进度、风格、位置、每日状态落 SQLite。
+- **可测领域层**：`domain` 不依赖 PyQt、pynput 或具体 DB。
+- **词库 / 例句可插拔**：协议 + 注册表。
 - **功能面渐进**：先单词跑通，再按规格加面，而不是先做空框架。
 
----
-
-## 发布（GitHub Release）
+## 发布
 
 推送 `v*` tag 会触发 Actions：打包 Windows zip 并挂到 Release。
 
@@ -263,8 +216,6 @@ git push origin v0.3.0
 本地试打包：`.\scripts\build_release.ps1` → `dist\NothingHere-win64.zip`。
 
 Tag 页上的 Source code zip 只是源码；安装包在 **Releases** 的 Assets 里。
-
----
 
 ## 贡献与许可
 
