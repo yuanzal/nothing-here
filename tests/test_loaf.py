@@ -9,12 +9,13 @@ from pathlib import Path
 from nothing_here.domain.loaf import (
     PaySettings,
     commit_work_times,
+    needs_rates,
     parse_amount,
     parse_clock,
     strip_text,
 )
 from nothing_here.ui.skins import skin_for
-from nothing_here.fx import parse_eur_rates
+from nothing_here.fx import parse_eur_rates, parse_vnd_rate
 from nothing_here.storage.db import LoafRecord, Store
 
 
@@ -41,50 +42,59 @@ def _at(hour: int, minute: int, second: int = 0) -> datetime:
 class AccrualTests(unittest.TestCase):
     def test_unset_work_or_pay_stays_zero(self) -> None:
         unpaid = _pay(daily_amount=Decimal(0))
-        self.assertEqual(strip_text(unpaid, _at(12, 0)), "你已摸鱼 ￥0.00")
+        self.assertEqual(strip_text(unpaid, _at(12, 0)), "你已摸鱼 CNY￥0.00")
         untimed = _pay(work_start=None, work_end=None)
-        self.assertEqual(strip_text(untimed, _at(12, 0)), "你已摸鱼 ￥0.00")
-        self.assertEqual(strip_text(_pay(), _at(8, 59, 59)), "你已摸鱼 ￥0.00")
+        self.assertEqual(strip_text(untimed, _at(12, 0)), "你已摸鱼 CNY￥0.00")
+        self.assertEqual(strip_text(_pay(), _at(8, 59, 59)), "你已摸鱼 CNY￥0.00")
 
     def test_midday_and_after_work_without_lunch(self) -> None:
         # 09:00–18:00，11:00 走过 2/9
-        self.assertEqual(strip_text(_pay(), _at(11, 0)), "你已摸鱼 ￥22.22")
-        self.assertEqual(strip_text(_pay(), _at(18, 0)), "你已摸鱼 ￥100.00")
-        self.assertEqual(strip_text(_pay(), _at(20, 0)), "你已摸鱼 ￥100.00")
+        self.assertEqual(strip_text(_pay(), _at(11, 0)), "你已摸鱼 CNY￥22.22")
+        self.assertEqual(strip_text(_pay(), _at(18, 0)), "你已摸鱼 CNY￥100.00")
+        self.assertEqual(strip_text(_pay(), _at(20, 0)), "你已摸鱼 CNY￥100.00")
 
     def test_lunch_is_excluded_and_shows_rest(self) -> None:
         settings = _pay(lunch_start=12 * 60, lunch_end=13 * 60)
         self.assertEqual(strip_text(settings, _at(12, 30)), "休息中")
         # 可计 8 小时，13:00 已计上午 3 小时
-        self.assertEqual(strip_text(settings, _at(13, 0)), "你已摸鱼 ￥37.50")
-        self.assertEqual(strip_text(settings, _at(18, 0)), "你已摸鱼 ￥100.00")
+        self.assertEqual(strip_text(settings, _at(13, 0)), "你已摸鱼 CNY￥37.50")
+        self.assertEqual(strip_text(settings, _at(18, 0)), "你已摸鱼 CNY￥100.00")
 
     def test_lunch_may_touch_the_shift_edge_but_not_replace_it(self) -> None:
         edge = _pay(lunch_start=9 * 60, lunch_end=10 * 60)
         self.assertEqual(strip_text(edge, _at(9, 30)), "休息中")
-        self.assertEqual(strip_text(edge, _at(8, 0)), "你已摸鱼 ￥0.00")
+        self.assertEqual(strip_text(edge, _at(8, 0)), "你已摸鱼 CNY￥0.00")
         full = _pay(lunch_start=9 * 60, lunch_end=18 * 60)
         self.assertEqual(strip_text(full, _at(12, 0)), "休息中")
-        self.assertEqual(strip_text(full, _at(18, 0)), "你已摸鱼 ￥0.00")
+        self.assertEqual(strip_text(full, _at(18, 0)), "你已摸鱼 CNY￥0.00")
 
     def test_monthly_uses_21_75_and_recomputes_from_the_new_rate(self) -> None:
         monthly = _pay(pay_mode="monthly", monthly_amount=Decimal("2175"), daily_amount=Decimal("1"))
-        self.assertEqual(strip_text(monthly, _at(18, 0)), "你已摸鱼 ￥100.00")
+        self.assertEqual(strip_text(monthly, _at(18, 0)), "你已摸鱼 CNY￥100.00")
         raised = _pay(daily_amount=Decimal("200"))
-        self.assertEqual(strip_text(raised, _at(18, 0)), "你已摸鱼 ￥200.00")
+        self.assertEqual(strip_text(raised, _at(18, 0)), "你已摸鱼 CNY￥200.00")
 
     def test_currency_conversion_rounds_half_up_and_falls_back(self) -> None:
         rates = {"CNY": Decimal("7.5"), "USD": Decimal("1.5"), "JPY": Decimal("150"), "KRW": Decimal("1500"), "SGD": Decimal("1.5")}
         usd = _pay(display="USD")
         # 100 CNY = 100/7.5 EUR = 20 USD
-        self.assertEqual(strip_text(usd, _at(18, 0), rates), "你已摸鱼 $20.00")
+        self.assertEqual(strip_text(usd, _at(18, 0), rates), "你已摸鱼 USD$20.00")
         yen = _pay(unit="JPY", display="JPY", daily_amount=Decimal("100"))
-        self.assertEqual(strip_text(yen, _at(11, 0)), "你已摸鱼 円22")
+        self.assertEqual(strip_text(yen, _at(11, 0)), "你已摸鱼 JPY円22")
         half = _pay(unit="JPY", display="JPY", daily_amount=Decimal("9"))
         # 09:00–18:00 的一半是 13:30，4.5 日元四舍五入到 5。2/9*9 = 2
-        self.assertEqual(strip_text(half, _at(13, 30)), "你已摸鱼 円5")
-        self.assertEqual(strip_text(usd, _at(18, 0), None), "你已摸鱼 ￥100.00")
-        self.assertEqual(strip_text(usd, _at(18, 0), {"USD": Decimal("1.5")}), "你已摸鱼 ￥100.00")
+        self.assertEqual(strip_text(half, _at(13, 30)), "你已摸鱼 JPY円5")
+        self.assertEqual(strip_text(usd, _at(18, 0), None), "你已摸鱼 CNY￥100.00")
+        self.assertEqual(strip_text(usd, _at(18, 0), {"USD": Decimal("1.5")}), "你已摸鱼 CNY￥100.00")
+        dong = _pay(display="VND")
+        self.assertEqual(strip_text(dong, _at(18, 0), rates), "你已摸鱼 CNY￥100.00")
+        self.assertTrue(needs_rates("CNY", "VND", rates))
+        dong_rates = {**rates, "VND": Decimal("26000")}
+        self.assertFalse(needs_rates("CNY", "VND", dong_rates))
+        # 100 CNY = 100/7.5 EUR × 26000 = 346666.6… → ₫346667
+        self.assertEqual(strip_text(dong, _at(18, 0), dong_rates), "你已摸鱼 VND₫346667")
+        native = _pay(unit="VND", display="VND", daily_amount=Decimal("25834000"))
+        self.assertEqual(strip_text(native, _at(11, 0)), "你已摸鱼 VND₫5740889")
 
     def test_clock_and_amount_parsing(self) -> None:
         self.assertEqual(parse_clock("09:00"), 9 * 60)
@@ -96,6 +106,8 @@ class AccrualTests(unittest.TestCase):
         self.assertIsNone(parse_amount("-1", "CNY"))
         self.assertIsNone(parse_amount("10.5", "JPY"))
         self.assertEqual(parse_amount("10", "JPY"), Decimal(10))
+        self.assertEqual(parse_amount("25834000", "VND"), Decimal("25834000"))
+        self.assertIsNone(parse_amount("1.2", "VND"))
 
 
 class WorkCommitTests(unittest.TestCase):
@@ -169,6 +181,15 @@ class RateParseTests(unittest.TestCase):
         self.assertEqual(parsed["JPY"], Decimal(160))
         self.assertIsNone(parse_eur_rates(b'[{"quote":"USD","rate":1.1}]'))
         self.assertIsNone(parse_eur_rates(b"[]"))
+
+    def test_vnd_rate_from_pair_payload(self) -> None:
+        self.assertEqual(parse_vnd_rate(b'{"rate":29007.5}'), Decimal("29007.5"))
+        self.assertEqual(
+            parse_vnd_rate(b'{"rates":{"VND":29007}}'),
+            Decimal("29007"),
+        )
+        self.assertIsNone(parse_vnd_rate(b'{"rate":0}'))
+        self.assertIsNone(parse_vnd_rate(b"[]"))
 
 
 class SkinTests(unittest.TestCase):

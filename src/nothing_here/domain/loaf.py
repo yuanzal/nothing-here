@@ -7,7 +7,7 @@ from datetime import datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Mapping, Optional
 
-CURRENCIES: tuple[str, ...] = ("CNY", "USD", "EUR", "JPY", "KRW", "SGD")
+CURRENCIES: tuple[str, ...] = ("CNY", "USD", "EUR", "JPY", "KRW", "SGD", "VND")
 CURRENCY_LABELS: tuple[tuple[str, str], ...] = (
     ("CNY", "人民币"),
     ("USD", "美元"),
@@ -15,6 +15,7 @@ CURRENCY_LABELS: tuple[tuple[str, str], ...] = (
     ("JPY", "日元"),
     ("KRW", "韩元"),
     ("SGD", "新加坡元"),
+    ("VND", "越南盾"),
 )
 SYMBOLS: dict[str, str] = {
     "CNY": "￥",
@@ -23,10 +24,11 @@ SYMBOLS: dict[str, str] = {
     "JPY": "円",
     "KRW": "₩",
     "SGD": "S$",
+    "VND": "₫",
 }
-ZERO_DECIMAL = frozenset({"JPY", "KRW"})
+ZERO_DECIMAL = frozenset({"JPY", "KRW", "VND"})
 MONTHLY_DAYS = Decimal("21.75")
-_AMOUNT_MAX = Decimal("999999999")
+_AMOUNT_MAX = Decimal("999999999999")
 
 
 @dataclass(frozen=True)
@@ -73,7 +75,7 @@ def format_clock(minute: int) -> str:
 
 
 def parse_amount(text: str, currency: str) -> Optional[Decimal]:
-    """非负金额。日元和韩元只要整数，其余最多到分。"""
+    """非负金额。日元、韩元和越南盾只要整数，其余最多到分。"""
     raw = text.strip().replace(",", "")
     if not raw or currency not in CURRENCIES:
         return None
@@ -117,12 +119,12 @@ def strip_text(
     moment: datetime,
     per_eur: Optional[Mapping[str, Decimal]] = None,
 ) -> str:
-    """薪条上的一行。午休期间是「休息中」，其余是「你已摸鱼」加金额。"""
+    """薪条上的一行。午休期间是「休息中」，其余是「你已摸鱼」加三字码、符号和金额。"""
     if _resting(settings, moment):
         return "休息中"
     amount = accrued(settings, moment)
     shown, currency = project(amount, settings.unit, settings.display, per_eur)
-    return f"你已摸鱼 {SYMBOLS[currency]}{_format_amount(shown, currency)}"
+    return f"你已摸鱼 {currency}{SYMBOLS[currency]}{_format_amount(shown, currency)}"
 
 
 def accrued(settings: PaySettings, moment: datetime) -> Decimal:
@@ -153,6 +155,17 @@ def project(
     if unit_per is None or display_per is None:
         return amount, unit
     return amount * display_per / unit_per, display
+
+
+def needs_rates(
+    unit: str,
+    display: str,
+    per_eur: Optional[Mapping[str, Decimal]],
+) -> bool:
+    """货币显示还缺对欧元的牌价。"""
+    if display == unit or display not in CURRENCIES or unit not in CURRENCIES:
+        return False
+    return _per_eur(unit, per_eur) is None or _per_eur(display, per_eur) is None
 
 
 def _daily_pay(settings: PaySettings) -> Decimal:

@@ -124,7 +124,7 @@ class WorkStatusDialog(QDialog):
         daily = parse_amount(self._daily.text(), unit)
         monthly = parse_amount(self._monthly.text(), unit)
         if daily is None or monthly is None:
-            self._hint.setText("金额无效。写成非负数字，日元和韩元取整数，其余到分。")
+            self._hint.setText("金额无效。写成非负数字，日元、韩元和越南盾取整数，其余到分。")
             return
         lunch_start = _minutes(self._lunch_start) if self._lunch_on.isChecked() else ""
         lunch_end = _minutes(self._lunch_end) if self._lunch_on.isChecked() else ""

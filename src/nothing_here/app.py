@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import QApplication, QFileDialog
 
 from nothing_here.desktop.host import DesktopHost
 from nothing_here.domain.formats import SUPPORTED_SUFFIXES, dialog_filter, extract_book_text
-from nothing_here.domain.loaf import PaySettings, format_clock, strip_text
+from nothing_here.domain.loaf import PaySettings, format_clock, needs_rates, strip_text
 from nothing_here.domain.read import chapter_starts, turn_chapter, turn_page
 from nothing_here.domain.daily import (
     DailyPlan,
@@ -142,6 +142,7 @@ class App(QObject):
         self._skin_id = skin_for(self._store.load_skin()).skin_id
         self._fx_attempted, fx_raw = self._store.load_fx()
         self._fx_rates = _rates_from(fx_raw)
+        self._fx_missing_tried = False
         self._suppressed = False
         self._closing = False
         self._loaf: Optional[WageStrip] = None
@@ -953,8 +954,17 @@ class App(QObject):
         if self._closing or self._pay.display == self._pay.unit:
             return
         today = date.today().isoformat()
-        if self._fx_attempted == today or self._fx_thread is not None:
+        if self._fx_attempted != today:
+            self._fx_missing_tried = False
+        if self._fx_thread is not None:
             return
+        missing = needs_rates(self._pay.unit, self._pay.display, self._fx_rates)
+        if not missing and self._fx_attempted == today:
+            return
+        if missing and self._fx_missing_tried:
+            return
+        if missing:
+            self._fx_missing_tried = True
         self._fx_attempted = today
         self._store.save_fx(today, None)
         job = _RateFetch(self)
@@ -968,6 +978,8 @@ class App(QObject):
         if self._closing or not isinstance(rates, dict):
             self._refresh_loaf()
             return
+        if "VND" not in rates and self._fx_rates and "VND" in self._fx_rates:
+            rates = {**rates, "VND": self._fx_rates["VND"]}
         self._fx_rates = rates
         self._store.save_fx(
             self._fx_attempted,
