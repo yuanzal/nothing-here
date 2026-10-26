@@ -1180,7 +1180,7 @@ class App(QObject):
         if not isinstance(self._card, ReadWindow) or not self._current_book:
             return
         if kind == "chapter":
-            new_offset = turn_chapter(self._chapters, self._page_starts, self._offset, step)
+            new_offset = turn_chapter(self._chapters, self._offset, step)
         else:
             new_offset = turn_page(self._page_starts, self._offset, step)
         if new_offset == self._offset:

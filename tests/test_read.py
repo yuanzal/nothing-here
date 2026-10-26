@@ -63,30 +63,29 @@ class PageTurnTests(unittest.TestCase):
 
 
 class ChapterTurnTests(unittest.TestCase):
-    def test_chapter_turns_stop_on_the_first_and_last_page_of_the_chapter(self) -> None:
+    def test_chapter_turns_land_on_adjacent_chapter_starts(self) -> None:
         chapters = (0, 100, 200)
-        pages = tuple(range(0, 310, 10))
-        self.assertEqual(turn_chapter(chapters, pages, 150, -1), 0)
-        self.assertEqual(turn_chapter(chapters, pages, 150, 1), 200)
-        self.assertEqual(turn_chapter(chapters, pages, 100, -1), 100)
-        self.assertEqual(turn_chapter(chapters, pages, 100, 1), 200)
-        self.assertEqual(turn_chapter(chapters, pages, 190, 1), 190)
-        self.assertEqual(turn_chapter(chapters, pages, 190, -1), 0)
-        self.assertEqual(turn_chapter(chapters, pages, 90, 1), 90)
-        self.assertEqual(turn_chapter(chapters, pages, 90, -1), 90)
-        self.assertEqual(turn_chapter(chapters, pages, 0, -1), 0)
-        self.assertEqual(turn_chapter(chapters, pages, 0, 1), 100)
+        self.assertEqual(turn_chapter(chapters, 150, -1), 0)
+        self.assertEqual(turn_chapter(chapters, 150, 1), 200)
+        self.assertEqual(turn_chapter(chapters, 100, -1), 0)
+        self.assertEqual(turn_chapter(chapters, 100, 1), 200)
+        self.assertEqual(turn_chapter(chapters, 190, 1), 200)
+        self.assertEqual(turn_chapter(chapters, 190, -1), 0)
+        self.assertEqual(turn_chapter(chapters, 90, 1), 100)
+        self.assertEqual(turn_chapter(chapters, 90, -1), 90)
+        self.assertEqual(turn_chapter(chapters, 0, -1), 0)
+        self.assertEqual(turn_chapter(chapters, 0, 1), 100)
+        self.assertEqual(turn_chapter(chapters, 200, 1), 200)
+        self.assertEqual(turn_chapter(chapters, 200, -1), 100)
 
     def test_a_single_chapter_does_not_move(self) -> None:
-        pages = (0, 10, 20)
-        self.assertEqual(turn_chapter((0,), pages, 15, -1), 15)
-        self.assertEqual(turn_chapter((0,), pages, 15, 1), 15)
+        self.assertEqual(turn_chapter((0,), 15, -1), 15)
+        self.assertEqual(turn_chapter((0,), 15, 1), 15)
 
     def test_text_before_the_first_heading_steps_forward_only(self) -> None:
         chapters = (40, 80)
-        pages = (0, 20, 40, 60, 80)
-        self.assertEqual(turn_chapter(chapters, pages, 10, 1), 40)
-        self.assertEqual(turn_chapter(chapters, pages, 10, -1), 10)
+        self.assertEqual(turn_chapter(chapters, 10, 1), 40)
+        self.assertEqual(turn_chapter(chapters, 10, -1), 10)
 
 
 class DecodeTests(unittest.TestCase):

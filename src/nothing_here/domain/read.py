@@ -64,19 +64,16 @@ def turn_page(page_starts: Sequence[int], offset: int, step: int) -> int:
 
 def turn_chapter(
     chapter_marks: Sequence[int],
-    page_starts: Sequence[int],
     offset: int,
     step: int,
 ) -> int:
     """上一章 / 下一章的新偏移，落到目标章的起点。
 
-    已经在本章第一页时，上一章不改偏移；已经在本章最后一页时，下一章不改偏移。
-    没有上一章或下一章时也不改。全书只有一章时两个方向都不动。
+    没有上一章或下一章时不改。全书只有一章时两个方向都不动。
     """
     if step == 0:
         return offset
     chapters = tuple(chapter_marks) if chapter_marks else (0,)
-    pages = tuple(page_starts) if page_starts else (0,)
     if offset < 0:
         offset = 0
     index = _index_at_or_before(chapters, offset)
@@ -84,19 +81,10 @@ def turn_chapter(
         if step > 0:
             return int(chapters[0])
         return offset
-    page_index = page_of(pages, offset)
-    first_page = page_of(pages, int(chapters[index]))
-    if index + 1 < len(chapters):
-        last_page = page_of(pages, int(chapters[index + 1]) - 1)
-    else:
-        last_page = len(pages) - 1
-    if step < 0:
-        if page_index <= first_page or index == 0:
-            return offset
-        return int(chapters[index - 1])
-    if page_index >= last_page or index + 1 >= len(chapters):
+    target = index + (1 if step > 0 else -1)
+    if target < 0 or target >= len(chapters):
         return offset
-    return int(chapters[index + 1])
+    return int(chapters[target])
 
 
 def decode_book_bytes(data: bytes) -> Optional[str]:

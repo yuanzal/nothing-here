@@ -166,14 +166,14 @@ class ReadWindow(QWidget):
         layout.setSpacing(8)
 
         self._page = _Page()
-        self._prev = self._nav_button("〈", self.prev_page)
-        self._next = self._nav_button("〉", self.next_page)
-        self._prev_chapter = self._nav_button("《", self.prev_chapter)
-        self._next_chapter = self._nav_button("》", self.next_chapter)
+        self._prev_chapter = self._nav_button("<<", self.prev_chapter)
+        self._prev = self._nav_button("<", self.prev_page)
+        self._next = self._nav_button(">", self.next_page)
+        self._next_chapter = self._nav_button(">>", self.next_chapter)
         nav = QHBoxLayout()
         nav.setContentsMargins(0, 0, 0, 0)
         nav.setSpacing(8)
-        for button in (self._prev, self._next, self._prev_chapter, self._next_chapter):
+        for button in (self._prev_chapter, self._prev, self._next, self._next_chapter):
             nav.addWidget(button)
             button.installEventFilter(self)
         self._nav = QWidget()

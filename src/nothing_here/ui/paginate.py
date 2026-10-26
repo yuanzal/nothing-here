@@ -95,6 +95,8 @@ def _fit_end(
     lines_left = capacity
     cursor = start
     while cursor < limit and lines_left > 0:
+        if cursor > start and _heading_at(text, cursor):
+            return cursor
         newline = text.find("\n", cursor)
         if newline == -1 or newline >= limit:
             raw_end = limit
