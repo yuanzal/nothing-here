@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QPoint, QPointF, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QPoint, QPointF, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QFontMetrics, QMouseEvent, QPainter, QWheelEvent
 from PyQt6.QtWidgets import (
     QApplication,
@@ -29,10 +29,18 @@ READ_FONT_PX = {"small": 14, "medium": 16, "large": 18}
 READ_LEADING = {"tight": 1.25, "medium": 1.5, "loose": 1.8}
 
 
+_BUTTON_MOUSE = {
+    QEvent.Type.MouseButtonPress,
+    QEvent.Type.MouseButtonRelease,
+    QEvent.Type.MouseButtonDblClick,
+}
+
+
 class _Body(QWidget):
     def __init__(self, owner: "ReadWindow") -> None:
         super().__init__(owner)
         self._owner = owner
+        self._forwarding = False
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.setCursor(Qt.CursorShape.OpenHandCursor)
@@ -69,8 +77,15 @@ class _Body(QWidget):
         event.accept()
 
     def _forward_button(self, event: QMouseEvent) -> bool:
+        if self._forwarding:
+            return True
         target = _button_at(self, event.position().toPoint())
         if target is None:
+            return False
+        if event.type() not in _BUTTON_MOUSE:
+            event.accept()
+            return True
+        if not target.isEnabled():
             return False
         local = QPointF(target.mapFrom(self, event.position().toPoint()))
         forwarded = QMouseEvent(
@@ -81,7 +96,11 @@ class _Body(QWidget):
             event.buttons(),
             event.modifiers(),
         )
-        QApplication.sendEvent(target, forwarded)
+        self._forwarding = True
+        try:
+            QApplication.sendEvent(target, forwarded)
+        finally:
+            self._forwarding = False
         event.accept()
         return True
 

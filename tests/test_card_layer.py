@@ -6,7 +6,8 @@ import unittest
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import QEvent, QPointF, Qt
+from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
@@ -50,6 +51,23 @@ class CardLayerTests(unittest.TestCase):
         card.close()
         self.assertEqual(hits, ["layer"], hits)
         self.assertEqual(drags, [], drags)
+
+    def test_dragging_layer_button_does_not_recurse(self) -> None:
+        card = CardWindow()
+        drags: list[object] = []
+        card.moved.connect(lambda x, y: drags.append((x, y)))
+        _show(card)
+        start = card._layer.mapTo(card._body, card._layer.rect().center())
+        move = QMouseEvent(
+            QEvent.Type.MouseMove,
+            QPointF(start),
+            Qt.MouseButton.NoButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        self.assertTrue(QApplication.sendEvent(card._body, move))
+        card.close()
+        self.assertEqual(drags, [])
 
     def test_pressing_the_word_still_drags(self) -> None:
         card = CardWindow()

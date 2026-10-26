@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from PyQt6.QtCore import QElapsedTimer, QPoint, QPointF, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QElapsedTimer, QEvent, QPoint, QPointF, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QIcon, QImage, QMouseEvent, QPainter, QPixmap
 from PyQt6.QtSvg import QSvgRenderer
 from PyQt6.QtWidgets import (
@@ -48,12 +48,20 @@ def stats_text(correct: int, reviews: int) -> str:
     return f"正确率 {rate}  背诵 {reviews} 次"
 
 
+_BUTTON_MOUSE = {
+    QEvent.Type.MouseButtonPress,
+    QEvent.Type.MouseButtonRelease,
+    QEvent.Type.MouseButtonDblClick,
+}
+
+
 class _Body(QWidget):
     """Content layer. Stays non-native so it does not punch a hole in the transparent card."""
 
     def __init__(self, owner: "CardWindow") -> None:
         super().__init__(owner)
         self._owner = owner
+        self._forwarding = False
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAutoFillBackground(False)
         self.setCursor(Qt.CursorShape.OpenHandCursor)
@@ -95,11 +103,16 @@ class _Body(QWidget):
         super().mouseReleaseEvent(event)
 
     def _forward_button(self, event: QMouseEvent) -> bool:
+        if self._forwarding:
+            return True
         target = _interactive_at(self, event.position().toPoint())
         if target is None:
             return False
         if isinstance(target, _SpellGrid):
             # 桌面嵌入不接焦点；点格子只是提示用户「可以打字了」，键由 pynput 收。
+            event.accept()
+            return True
+        if event.type() not in _BUTTON_MOUSE:
             event.accept()
             return True
         if isinstance(target, QPushButton) and not target.isEnabled():
@@ -113,7 +126,11 @@ class _Body(QWidget):
             event.buttons(),
             event.modifiers(),
         )
-        QApplication.sendEvent(target, forwarded)
+        self._forwarding = True
+        try:
+            QApplication.sendEvent(target, forwarded)
+        finally:
+            self._forwarding = False
         event.accept()
         return True
 
