@@ -5,10 +5,11 @@ import os
 import sqlite3
 import uuid
 from dataclasses import dataclass
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Optional
 
-from nothing_here.domain.loaf import CURRENCIES
+from nothing_here.domain.loaf import CURRENCIES, DEFAULT_GOODS, Good
 from nothing_here.domain.read import disambiguate_title
 from nothing_here.domain.spell import MISS_LIMIT
 
@@ -67,6 +68,8 @@ class LoafRecord:
     lunch_end: Optional[int] = None
     origin: Optional[tuple[int, int]] = None
     look: str = "plain"
+    payday: Optional[int] = None
+    board: Optional[tuple[int, int, int, int]] = None
 
 
 @dataclass(frozen=True)
@@ -167,7 +170,26 @@ class Store:
                 lunch_end INTEGER,
                 x INTEGER,
                 y INTEGER,
-                look TEXT NOT NULL DEFAULT 'plain'
+                look TEXT NOT NULL DEFAULT 'plain',
+                payday INTEGER,
+                board_x INTEGER,
+                board_y INTEGER,
+                board_w INTEGER,
+                board_h INTEGER
+            );
+
+            CREATE TABLE IF NOT EXISTS loaf_good (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                price TEXT NOT NULL,
+                unit_label TEXT NOT NULL,
+                shown INTEGER NOT NULL DEFAULT 0,
+                place INTEGER NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS loaf_day (
+                day TEXT PRIMARY KEY,
+                amount TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS ui_skin (
@@ -244,6 +266,37 @@ class Store:
             self._conn.execute(
                 "ALTER TABLE loaf_state ADD COLUMN look TEXT NOT NULL DEFAULT 'plain'"
             )
+        loaf_adds = (
+            ("payday", "INTEGER"),
+            ("board_x", "INTEGER"),
+            ("board_y", "INTEGER"),
+            ("board_w", "INTEGER"),
+            ("board_h", "INTEGER"),
+        )
+        for name, decl in loaf_adds:
+            if loaf_cols and name not in loaf_cols:
+                self._conn.execute(f"ALTER TABLE loaf_state ADD COLUMN {name} {decl}")
+                loaf_cols.add(name)
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS loaf_good (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                price TEXT NOT NULL,
+                unit_label TEXT NOT NULL,
+                shown INTEGER NOT NULL DEFAULT 0,
+                place INTEGER NOT NULL
+            )
+            """
+        )
+        self._conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS loaf_day (
+                day TEXT PRIMARY KEY,
+                amount TEXT NOT NULL
+            )
+            """
+        )
 
     def get_progress(self, word: str) -> tuple[int, int]:
         row = self._conn.execute(
@@ -525,7 +578,8 @@ class Store:
         row = self._conn.execute(
             """
             SELECT hidden, pay_mode, daily_amount, monthly_amount, unit, display,
-                   work_start, work_end, lunch_start, lunch_end, x, y, look
+                   work_start, work_end, lunch_start, lunch_end, x, y, look,
+                   payday, board_x, board_y, board_w, board_h
             FROM loaf_state WHERE id = 1
             """
         ).fetchone()
@@ -545,6 +599,11 @@ class Store:
             x,
             y,
             look,
+            payday,
+            board_x,
+            board_y,
+            board_w,
+            board_h,
         ) = row
         mode = str(pay_mode or "daily")
         if mode not in ("daily", "monthly"):
@@ -562,18 +621,22 @@ class Store:
             lunch_end=_minute(lunch_end),
             origin=_origin(x, y),
             look=_skin_id(look),
+            payday=_payday(payday),
+            board=_board_rect(board_x, board_y, board_w, board_h),
         )
 
     def save_loaf(self, record: LoafRecord) -> None:
         x, y = _pair(record.origin)
+        board = record.board
         mode = record.pay_mode if record.pay_mode in ("daily", "monthly") else "daily"
         self._conn.execute(
             """
             INSERT INTO loaf_state(
                 id, hidden, pay_mode, daily_amount, monthly_amount, unit, display,
-                work_start, work_end, lunch_start, lunch_end, x, y, look
+                work_start, work_end, lunch_start, lunch_end, x, y, look, payday,
+                board_x, board_y, board_w, board_h
             )
-            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 hidden = excluded.hidden,
                 pay_mode = excluded.pay_mode,
@@ -587,7 +650,12 @@ class Store:
                 lunch_end = excluded.lunch_end,
                 x = excluded.x,
                 y = excluded.y,
-                look = excluded.look
+                look = excluded.look,
+                payday = excluded.payday,
+                board_x = excluded.board_x,
+                board_y = excluded.board_y,
+                board_w = excluded.board_w,
+                board_h = excluded.board_h
             """,
             (
                 1 if record.hidden else 0,
@@ -603,8 +671,75 @@ class Store:
                 x,
                 y,
                 _skin_id(record.look),
+                _payday(record.payday),
+                None if board is None else board[0],
+                None if board is None else board[1],
+                None if board is None else board[2],
+                None if board is None else board[3],
             ),
         )
+        self._conn.commit()
+
+    def load_goods(self) -> tuple[Good, ...]:
+        rows = self._conn.execute(
+            "SELECT id, name, price, unit_label, shown FROM loaf_good ORDER BY place, id"
+        ).fetchall()
+        if not rows:
+            self.save_goods(DEFAULT_GOODS)
+            return DEFAULT_GOODS
+        goods: list[Good] = []
+        for key, name, price, unit_label, shown in rows:
+            goods.append(
+                Good(
+                    str(key),
+                    str(name),
+                    _money_text(price),
+                    str(unit_label),
+                    bool(shown),
+                )
+            )
+        if not any(item.shown for item in goods) and goods:
+            goods[0] = Good(goods[0].key, goods[0].name, goods[0].price, goods[0].unit_label, True)
+        return tuple(goods)
+
+    def save_goods(self, goods: tuple[Good, ...]) -> None:
+        self._conn.execute("DELETE FROM loaf_good")
+        for index, item in enumerate(goods):
+            self._conn.execute(
+                """
+                INSERT INTO loaf_good(id, name, price, unit_label, shown, place)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    item.key,
+                    item.name,
+                    format(item.price, "f"),
+                    item.unit_label,
+                    1 if item.shown else 0,
+                    index,
+                ),
+            )
+        self._conn.commit()
+
+    def load_day_closes(self) -> dict[str, Decimal]:
+        rows = self._conn.execute("SELECT day, amount FROM loaf_day")
+        closes: dict[str, Decimal] = {}
+        for day, amount in rows:
+            closes[str(day)] = _money_text(amount)
+        return closes
+
+    def save_day_close(self, day: str, amount: Decimal) -> None:
+        self._conn.execute(
+            """
+            INSERT INTO loaf_day(day, amount) VALUES (?, ?)
+            ON CONFLICT(day) DO UPDATE SET amount = excluded.amount
+            """,
+            (day, format(amount, "f")),
+        )
+        self._conn.commit()
+
+    def clear_day_closes(self) -> None:
+        self._conn.execute("DELETE FROM loaf_day")
         self._conn.commit()
 
     def load_skin(self) -> str:
@@ -820,6 +955,37 @@ def _skin_id(value: object) -> str:
 def _currency(value: object) -> str:
     text = str(value or "")
     return text if text in CURRENCIES else "CNY"
+
+
+def _payday(value: object) -> Optional[int]:
+    if value is None:
+        return None
+    day = int(value)
+    if day < 1 or day > 31:
+        return None
+    return day
+
+
+def _board_rect(
+    x: object, y: object, w: object, h: object
+) -> Optional[tuple[int, int, int, int]]:
+    if x is None or y is None or w is None or h is None:
+        return None
+    width = int(w)
+    height = int(h)
+    if width < 200 or height < 200:
+        return None
+    return int(x), int(y), width, height
+
+
+def _money_text(value: object) -> Decimal:
+    try:
+        amount = Decimal(str(value or "0"))
+    except InvalidOperation:
+        return Decimal(0)
+    if amount < 0:
+        return Decimal(0)
+    return amount
 
 
 def _minute(value: object) -> Optional[int]:

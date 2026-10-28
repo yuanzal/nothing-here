@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+import calendar
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Mapping, Optional
 
@@ -42,6 +43,23 @@ class PaySettings:
     work_end: Optional[int]
     lunch_start: Optional[int]
     lunch_end: Optional[int]
+    payday: Optional[int] = None
+
+
+@dataclass(frozen=True)
+class Good:
+    key: str
+    name: str
+    price: Decimal
+    unit_label: str
+    shown: bool = False
+
+
+DEFAULT_GOODS: tuple[Good, ...] = (
+    Good("coffee", "咖啡", Decimal("25"), "杯", True),
+    Good("tea", "奶茶", Decimal("18"), "杯", False),
+    Good("meal", "盒饭", Decimal("30"), "份", False),
+)
 
 
 @dataclass(frozen=True)
@@ -130,7 +148,7 @@ def strip_text(
 def accrued(settings: PaySettings, moment: datetime) -> Decimal:
     """货币单位下的今日累计，不换算、不舍入。"""
     total = _payable_seconds(settings)
-    daily = _daily_pay(settings)
+    daily = daily_pay(settings)
     if total <= 0 or daily <= 0:
         return Decimal(0)
     elapsed = min(_elapsed_payable(settings, moment), total)
@@ -157,6 +175,182 @@ def project(
     return amount * display_per / unit_per, display
 
 
+def daily_pay(settings: PaySettings) -> Decimal:
+    if settings.pay_mode == "monthly":
+        return settings.monthly_amount / MONTHLY_DAYS
+    return settings.daily_amount
+
+
+def parse_payday(text: str) -> Optional[int]:
+    raw = text.strip()
+    if not raw:
+        return None
+    if not raw.isdigit():
+        return None
+    day = int(raw)
+    if day < 1 or day > 31:
+        return None
+    return day
+
+
+def days_until_payday(moment: datetime, payday: Optional[int]) -> Optional[int]:
+    if payday is None:
+        return None
+    today = moment.date()
+    this = _payday_on(today.year, today.month, payday)
+    if today <= this:
+        return (this - today).days
+    if today.month == 12:
+        year, month = today.year + 1, 1
+    else:
+        year, month = today.year, today.month + 1
+    nxt = _payday_on(year, month, payday)
+    return (nxt - today).days
+
+
+def month_accrued(
+    settings: PaySettings,
+    moment: datetime,
+    closes: Mapping[str, Decimal],
+) -> Decimal:
+    today = moment.date().isoformat()
+    prefix = moment.strftime("%Y-%m-")
+    total = Decimal(0)
+    for day, amount in closes.items():
+        if day.startswith(prefix) and day != today:
+            total += amount
+    return total + accrued(settings, moment)
+
+
+def month_remaining(settings: PaySettings, moment: datetime) -> Decimal:
+    days = calendar.monthrange(moment.year, moment.month)[1]
+    leftover_days = days - moment.day
+    daily = daily_pay(settings)
+    unfinished = daily - accrued(settings, moment)
+    if unfinished < 0:
+        unfinished = Decimal(0)
+    return unfinished + daily * leftover_days
+
+
+def month_days(moment: datetime) -> int:
+    return calendar.monthrange(moment.year, moment.month)[1]
+
+
+def month_elapsed_days(settings: PaySettings, moment: datetime) -> Decimal:
+    prior = Decimal(moment.day - 1)
+    total = _payable_seconds(settings)
+    if total <= 0:
+        return prior
+    return prior + Decimal(_elapsed_payable(settings, moment)) / Decimal(total)
+
+
+def work_progress(settings: PaySettings, moment: datetime) -> Decimal:
+    total = _payable_seconds(settings)
+    if total <= 0:
+        return Decimal(0)
+    elapsed = _elapsed_payable(settings, moment)
+    if elapsed >= total:
+        return Decimal(1)
+    return Decimal(elapsed) / Decimal(total)
+
+
+def shift_phase(settings: PaySettings, moment: datetime) -> str:
+    work = _work(settings)
+    if work is None:
+        return "idle"
+    now = _second(moment)
+    if now < work[0] * 60:
+        return "before"
+    if now >= work[1] * 60:
+        return "after"
+    if _resting(settings, moment):
+        return "lunch"
+    return "work"
+
+
+def seconds_until_off(settings: PaySettings, moment: datetime) -> int:
+    work = _work(settings)
+    if work is None:
+        return 0
+    return max(0, work[1] * 60 - _second(moment))
+
+
+def work_hours(settings: PaySettings) -> Decimal:
+    total = _payable_seconds(settings)
+    if total <= 0:
+        return Decimal(0)
+    return Decimal(total) / Decimal(3600)
+
+
+def per_minute(settings: PaySettings) -> Decimal:
+    daily = daily_pay(settings)
+    seconds = _payable_seconds(settings)
+    if daily <= 0 or seconds <= 0:
+        return Decimal(0)
+    return daily * Decimal(60) / Decimal(seconds)
+
+
+def per_second(settings: PaySettings) -> Decimal:
+    daily = daily_pay(settings)
+    seconds = _payable_seconds(settings)
+    if daily <= 0 or seconds <= 0:
+        return Decimal(0)
+    return daily / Decimal(seconds)
+
+
+def buyable(amount: Decimal, price: Decimal) -> Decimal:
+    if price <= 0:
+        return Decimal(0)
+    return amount / price
+
+
+def minutes_for_price(settings: PaySettings, price: Decimal) -> Decimal:
+    daily = daily_pay(settings)
+    seconds = _payable_seconds(settings)
+    if daily <= 0 or seconds <= 0 or price <= 0:
+        return Decimal(0)
+    return price / daily * Decimal(seconds) / Decimal(60)
+
+
+def shown_good(goods: tuple[Good, ...]) -> Optional[Good]:
+    for item in goods:
+        if item.shown:
+            return item
+    return None
+
+
+def parse_good(
+    key: str,
+    name: str,
+    price_text: str,
+    unit_label: str,
+    currency: str,
+    shown: bool,
+) -> Optional[Good]:
+    title = name.strip()
+    label = unit_label.strip()
+    if not key.strip() or not title or not label:
+        return None
+    price = parse_amount(price_text, currency)
+    if price is None or price <= 0:
+        return None
+    return Good(key.strip(), title, price, label, shown)
+
+
+def format_amount(amount: Decimal, currency: str) -> str:
+    return _format_amount(amount, currency)
+
+
+def money_label(
+    amount: Decimal,
+    unit: str,
+    display: str,
+    per_eur: Optional[Mapping[str, Decimal]] = None,
+) -> str:
+    shown, currency = project(amount, unit, display, per_eur)
+    return f"{SYMBOLS[currency]}{format_amount(shown, currency)}"
+
+
 def needs_rates(
     unit: str,
     display: str,
@@ -168,10 +362,9 @@ def needs_rates(
     return _per_eur(unit, per_eur) is None or _per_eur(display, per_eur) is None
 
 
-def _daily_pay(settings: PaySettings) -> Decimal:
-    if settings.pay_mode == "monthly":
-        return settings.monthly_amount / MONTHLY_DAYS
-    return settings.daily_amount
+def _payday_on(year: int, month: int, payday: int) -> date:
+    last = calendar.monthrange(year, month)[1]
+    return date(year, month, min(payday, last))
 
 
 def _work(settings: PaySettings) -> Optional[tuple[int, int]]:

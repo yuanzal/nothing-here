@@ -8,11 +8,20 @@ from pathlib import Path
 
 from nothing_here.domain.loaf import (
     PaySettings,
+    buyable,
     commit_work_times,
+    days_until_payday,
+    month_accrued,
+    month_remaining,
     needs_rates,
     parse_amount,
     parse_clock,
+    parse_good,
+    parse_payday,
+    seconds_until_off,
+    shift_phase,
     strip_text,
+    work_progress,
 )
 from nothing_here.ui.skins import skin_for
 from nothing_here.fx import parse_eur_rates, parse_vnd_rate
@@ -110,6 +119,50 @@ class AccrualTests(unittest.TestCase):
         self.assertIsNone(parse_amount("1.2", "VND"))
 
 
+class PaydayTests(unittest.TestCase):
+    def test_short_month_falls_on_last_day_and_today_is_zero(self) -> None:
+        self.assertEqual(parse_payday("10"), 10)
+        self.assertIsNone(parse_payday(""))
+        self.assertIsNone(parse_payday("32"))
+        # 2026-10-22，发薪日 10 → 11 月 10 日，19 天
+        oct22 = datetime(2026, 10, 22, 12, 0)
+        self.assertEqual(days_until_payday(oct22, 10), 19)
+        self.assertEqual(days_until_payday(oct22, 22), 0)
+        feb = datetime(2026, 2, 10, 12, 0)
+        self.assertEqual(days_until_payday(feb, 31), 18)
+        self.assertEqual(days_until_payday(datetime(2026, 2, 28, 9, 0), 31), 0)
+
+
+class BoardMathTests(unittest.TestCase):
+    def test_month_accrued_ignores_today_close_and_does_not_backfill(self) -> None:
+        moment = datetime(2026, 10, 22, 11, 0)
+        closes = {"2026-10-01": Decimal("100"), "2026-10-22": Decimal("1")}
+        today = Decimal(100) * Decimal(2) / Decimal(9)
+        self.assertEqual(month_accrued(_pay(), moment, closes), Decimal(100) + today)
+        self.assertEqual(month_accrued(_pay(), moment, {}), today)
+
+    def test_month_remaining_is_unfinished_today_plus_later_calendar_days(self) -> None:
+        today = Decimal(100) * Decimal(2) / Decimal(9)
+        left = month_remaining(_pay(), datetime(2026, 10, 22, 11, 0))
+        self.assertEqual(left, Decimal(100) - today + Decimal(900))
+
+    def test_countdown_runs_through_lunch_and_progress_freezes(self) -> None:
+        settings = _pay(lunch_start=12 * 60, lunch_end=13 * 60)
+        self.assertEqual(shift_phase(settings, _at(12, 30)), "lunch")
+        self.assertEqual(seconds_until_off(settings, _at(12, 30)), 5 * 3600 + 30 * 60)
+        lunch = work_progress(settings, _at(12, 30))
+        self.assertEqual(lunch, work_progress(settings, _at(13, 0)))
+        self.assertEqual(shift_phase(settings, _at(18, 0)), "after")
+        self.assertEqual(seconds_until_off(settings, _at(20, 0)), 0)
+
+    def test_good_price_must_be_positive(self) -> None:
+        self.assertIsNone(parse_good("x", "咖啡", "0", "杯", "CNY", True))
+        self.assertIsNone(parse_good("x", "咖啡", "-1", "杯", "CNY", True))
+        item = parse_good("x", "咖啡", "25", "杯", "CNY", True)
+        assert item is not None
+        self.assertEqual(buyable(Decimal("347.66"), item.price), Decimal("13.9064"))
+
+
 class WorkCommitTests(unittest.TestCase):
     def test_invalid_shift_keeps_the_dialog_open(self) -> None:
         rejected = commit_work_times("18:00", "09:00", "", "")
@@ -162,9 +215,27 @@ class LoafStoreTests(unittest.TestCase):
             self.assertEqual(loaf.daily_amount, "12.50")
             self.assertEqual(loaf.display, "EUR")
             self.assertEqual(loaf.origin, (3, 4))
+            self.assertIsNone(loaf.payday)
             self.assertEqual(again.load_fx(), ("2026-10-16", {"USD": "1.1", "CNY": "7.5"}))
             again.save_fx("2026-10-17", None)
             self.assertEqual(again.load_fx(), ("2026-10-17", {"USD": "1.1", "CNY": "7.5"}))
+            again.close()
+
+    def test_payday_goods_and_day_closes_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            store = Store(Path(folder) / "study.db")
+            goods = store.load_goods()
+            self.assertEqual(goods[0].name, "咖啡")
+            self.assertTrue(goods[0].shown)
+            store.save_loaf(LoafRecord(payday=31, daily_amount="0", monthly_amount="0"))
+            store.save_day_close("2026-10-01", Decimal("100"))
+            store.close()
+            again = Store(Path(folder) / "study.db")
+            self.assertEqual(again.load_loaf().payday, 31)
+            self.assertEqual(again.load_day_closes()["2026-10-01"], Decimal("100"))
+            again.clear_day_closes()
+            self.assertEqual(again.load_day_closes(), {})
+            self.assertEqual(len(again.load_goods()), 3)
             again.close()
 
 
