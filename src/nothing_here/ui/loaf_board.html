@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>摸鱼看板</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #1c1c1c;
+    --muted: #666666;
+    --card: #f4f4f6;
+    --line: #e4e4e8;
+    --accent: #1c1c1c;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--bg); color: var(--fg);
+    font-family: "Segoe UI", "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+  }
+  body { padding: 20px 24px 32px; }
+  h1 { font-size: 18px; font-weight: 600; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 18px; }
+  .countdown {
+    background: var(--card); border-radius: 16px; padding: 22px 16px 18px;
+    text-align: center; margin-bottom: 16px;
+  }
+  .countdown .label { color: var(--muted); font-size: 12px; }
+  .digits { display: flex; justify-content: center; gap: 10px; margin: 10px 0 8px;
+    font-variant-numeric: tabular-nums; font-size: 42px; font-weight: 700; letter-spacing: 2px; }
+  .digits span.sep { opacity: .45; }
+  .units { display: flex; justify-content: center; gap: 38px; color: var(--muted); font-size: 11px; }
+  .bar { height: 6px; background: var(--line); border-radius: 99px; margin: 14px auto 0; max-width: 280px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--fg); width: 0; }
+  .phase { margin-top: 8px; font-size: 12px; color: var(--muted); }
+  .row { display: grid; grid-template-columns: 1.15fr .85fr; gap: 14px; margin-bottom: 14px; }
+  .card { background: var(--card); border-radius: 14px; padding: 16px; }
+  .k { color: var(--muted); font-size: 12px; }
+  .v { font-size: 32px; font-weight: 700; margin: 6px 0 10px; font-variant-numeric: tabular-nums; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .cell { background: var(--bg); border-radius: 10px; padding: 10px 12px; }
+  .cell .v { font-size: 18px; margin: 4px 0 0; }
+  .goods .v { font-size: 40px; text-align: center; }
+  .goods .unit { font-size: 14px; font-weight: 500; }
+  .mini { height: 4px; background: var(--line); border-radius: 99px; margin: 10px 0; overflow: hidden; }
+  .mini > i { display: block; height: 100%; background: var(--fg); }
+  .foot { display: grid; grid-template-columns: repeat(5, 1fr); gap: 10px; margin: 14px 0 18px; }
+  .foot .card .v { font-size: 22px; }
+  form.card label { display: block; color: var(--muted); font-size: 12px; margin: 8px 0 4px; }
+  input, select {
+    width: 100%; background: var(--bg); color: var(--fg); border: 1px solid var(--line);
+    border-radius: 8px; padding: 8px 10px; font: inherit;
+  }
+  .fields { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+  .good-row {
+    display: grid; grid-template-columns: auto 1.4fr 1fr .8fr auto; gap: 8px; align-items: center;
+    margin-top: 8px;
+  }
+  button {
+    background: var(--fg); color: var(--bg); border: 0; border-radius: 8px;
+    padding: 8px 12px; cursor: pointer; font: inherit;
+  }
+  button.ghost { background: transparent; color: var(--fg); border: 1px solid var(--line); }
+  button.danger { background: transparent; color: var(--fg); border: 1px solid var(--line); width: 100%; margin-top: 12px; }
+  .head { display: flex; justify-content: space-between; align-items: center; }
+</style>
+</head>
+<body>
+  <h1>摸鱼看板</h1>
+  <div class="sub">今日累计按工作时段现算 · 本月已摸鱼只计日结</div>
+  <div class="countdown">
+    <div class="label" id="cd-label">距离今天下班还有</div>
+    <div class="digits"><b id="h">00</b><span class="sep">:</span><b id="m">00</b><span class="sep">:</span><b id="s">00</b></div>
+    <div class="units"><span>时</span><span>分</span><span>秒</span></div>
+    <div class="bar"><i id="bar"></i></div>
+    <div class="phase" id="phase">今日进度 0%</div>
+  </div>
+  <div class="row">
+    <div class="card">
+      <div class="k">今日累计</div>
+      <div class="v" id="today">—</div>
+      <div class="grid">
+        <div class="cell"><div class="k">再坚持即可下班</div><div class="v" id="left-today">—</div></div>
+        <div class="cell"><div class="k">今日满额</div><div class="v" id="full-today">—</div></div>
+        <div class="cell"><div class="k">每分钟</div><div class="v" id="per-min">—</div></div>
+        <div class="cell"><div class="k">每秒</div><div class="v" id="per-sec">—</div></div>
+      </div>
+    </div>
+    <div class="card goods" id="goods-card">
+      <div class="head"><div class="k" id="good-name">实物</div><div class="k" id="good-price"></div></div>
+      <div class="v"><span id="buyable">—</span> <span class="unit" id="good-unit"></span></div>
+      <div class="mini"><i id="good-bar"></i></div>
+      <div class="k" id="good-hint">没有实物时这里空着</div>
+    </div>
+  </div>
+  <div class="foot">
+    <div class="card"><div class="k">距下次发薪</div><div class="v" id="payday-in">—</div><div class="k" id="payday-sub"></div></div>
+    <div class="card"><div class="k">本月天数</div><div class="v" id="month-days">—</div><div class="k" id="elapsed"></div></div>
+    <div class="card"><div class="k">本月已摸鱼</div><div class="v" id="month-acc">—</div></div>
+    <div class="card"><div class="k">本月待累计</div><div class="v" id="month-left">—</div></div>
+    <div class="card"><div class="k">每日工作时长</div><div class="v" id="hours">—</div></div>
+  </div>
+  <form class="card" id="pay-form">
+    <div class="head"><strong>工作状态</strong><span class="k">改完即保存</span></div>
+    <div class="fields">
+      <div><label>收入方式</label>
+        <select name="pay_mode"><option value="daily">按日薪</option><option value="monthly">按月薪</option></select></div>
+      <div><label>日薪</label><input name="daily" inputmode="decimal"></div>
+      <div><label>月薪</label><input name="monthly" inputmode="decimal"></div>
+      <div><label>货币单位</label><select name="unit"></select></div>
+      <div><label>上班起始</label><input name="work_start" placeholder="09:30"></div>
+      <div><label>下班终止</label><input name="work_end" placeholder="18:00"></div>
+      <div><label>午休开始</label><input name="lunch_start" placeholder="可空"></div>
+      <div><label>午休结束</label><input name="lunch_end" placeholder="可空"></div>
+      <div><label>发薪日（1–31，可空）</label><input name="payday" inputmode="numeric"></div>
+    </div>
+  </form>
+  <div class="card" style="margin-top:14px">
+    <div class="head"><strong>实物</strong><button type="button" id="add-good">添加</button></div>
+    <div id="goods-list"></div>
+    <button type="button" class="danger" id="clear">清除摸鱼记录</button>
+  </div>
+<script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script>
+  const $ = (id) => document.getElementById(id);
+  let bridge = null;
+  let applying = false;
+  let payTimer = 0;
+  let goodsTimer = 0;
+
+  function pad(n) { return String(n).padStart(2, "0"); }
+  function applyTheme(t) {
+    const r = document.documentElement.style;
+    r.setProperty("--bg", t.bg);
+    r.setProperty("--fg", t.fg);
+    r.setProperty("--muted", t.muted);
+    r.setProperty("--card", t.card);
+    r.setProperty("--line", t.line);
+  }
+  function apply(data) {
+    applying = true;
+    applyTheme(data.theme);
+    const d = data.clock;
+    $("h").textContent = pad(d.h);
+    $("m").textContent = pad(d.m);
+    $("s").textContent = pad(d.s);
+    $("bar").style.width = (data.progress * 100) + "%";
+    $("phase").textContent = data.phase_text;
+    $("cd-label").textContent = data.countdown_label;
+    $("today").textContent = data.today;
+    $("left-today").textContent = data.left_today;
+    $("full-today").textContent = data.full_today;
+    $("per-min").textContent = data.per_min;
+    $("per-sec").textContent = data.per_sec;
+    $("payday-in").textContent = data.payday_in;
+    $("payday-sub").textContent = data.payday_sub;
+    $("month-days").textContent = data.month_days;
+    $("elapsed").textContent = data.elapsed;
+    $("month-acc").textContent = data.month_acc;
+    $("month-left").textContent = data.month_left;
+    $("hours").textContent = data.hours;
+    if (data.good) {
+      $("good-name").textContent = data.good.name;
+      $("good-price").textContent = data.good.price;
+      $("buyable").textContent = data.good.buyable;
+      $("good-unit").textContent = data.good.unit_label;
+      $("good-bar").style.width = (data.good.frac * 100) + "%";
+      $("good-hint").textContent = data.good.hint;
+    } else {
+      $("good-name").textContent = "实物";
+      $("good-price").textContent = "";
+      $("buyable").textContent = "—";
+      $("good-unit").textContent = "";
+      $("good-bar").style.width = "0";
+      $("good-hint").textContent = "没有实物时这里空着";
+    }
+    const form = $("pay-form");
+    const f = data.form;
+    if (form.pay_mode.value !== f.pay_mode) form.pay_mode.value = f.pay_mode;
+    if (document.activeElement.form !== form) {
+      form.daily.value = f.daily;
+      form.monthly.value = f.monthly;
+      form.unit.innerHTML = f.units.map(u => `<option value="${u[0]}">${u[1]}</option>`).join("");
+      form.unit.value = f.unit;
+      form.work_start.value = f.work_start;
+      form.work_end.value = f.work_end;
+      form.lunch_start.value = f.lunch_start;
+      form.lunch_end.value = f.lunch_end;
+      form.payday.value = f.payday;
+    }
+    renderGoods(data.goods);
+    applying = false;
+  }
+  function renderGoods(goods) {
+    const box = $("goods-list");
+    if (document.activeElement && box.contains(document.activeElement)) return;
+    box.innerHTML = goods.map(g => `
+      <div class="good-row" data-key="${g.key}">
+        <input type="radio" name="shown" ${g.shown ? "checked" : ""}>
+        <input class="name" value="${escapeAttr(g.name)}" placeholder="名称">
+        <input class="price" value="${escapeAttr(g.price)}" placeholder="单价">
+        <input class="unit" value="${escapeAttr(g.unit_label)}" placeholder="单位">
+        <button type="button" class="ghost del">删</button>
+      </div>`).join("");
+  }
+  function escapeAttr(s) {
+    return String(s).replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;");
+  }
+  function collectGoods() {
+    return Array.from(document.querySelectorAll(".good-row")).map(row => ({
+      key: row.dataset.key,
+      name: row.querySelector(".name").value,
+      price: row.querySelector(".price").value,
+      unit_label: row.querySelector(".unit").value,
+      shown: row.querySelector("input[type=radio]").checked
+    }));
+  }
+  function schedulePay() {
+    if (applying) return;
+    clearTimeout(payTimer);
+    payTimer = setTimeout(() => {
+      const f = $("pay-form");
+      bridge.save_pay(JSON.stringify({
+        pay_mode: f.pay_mode.value,
+        daily: f.daily.value,
+        monthly: f.monthly.value,
+        unit: f.unit.value,
+        work_start: f.work_start.value,
+        work_end: f.work_end.value,
+        lunch_start: f.lunch_start.value,
+        lunch_end: f.lunch_end.value,
+        payday: f.payday.value
+      }));
+    }, 400);
+  }
+  function scheduleGoods() {
+    if (applying) return;
+    clearTimeout(goodsTimer);
+    goodsTimer = setTimeout(() => bridge.save_goods(JSON.stringify(collectGoods())), 400);
+  }
+  $("pay-form").addEventListener("input", schedulePay);
+  $("pay-form").addEventListener("change", schedulePay);
+  $("goods-list").addEventListener("input", scheduleGoods);
+  $("goods-list").addEventListener("change", scheduleGoods);
+  $("goods-list").addEventListener("click", (ev) => {
+    if (!ev.target.classList.contains("del")) return;
+    ev.target.closest(".good-row").remove();
+    scheduleGoods();
+  });
+  $("add-good").addEventListener("click", () => {
+    const key = "g" + Math.random().toString(16).slice(2);
+    const box = $("goods-list");
+    box.insertAdjacentHTML("beforeend", `
+      <div class="good-row" data-key="${key}">
+        <input type="radio" name="shown">
+        <input class="name" placeholder="名称">
+        <input class="price" placeholder="单价">
+        <input class="unit" placeholder="单位">
+        <button type="button" class="ghost del">删</button>
+      </div>`);
+  });
+  $("clear").addEventListener("click", () => bridge.ask_clear());
+  function boot() {
+    if (typeof QWebChannel === "undefined" || typeof qt === "undefined") {
+      setTimeout(boot, 50);
+      return;
+    }
+    new QWebChannel(qt.webChannelTransport, (channel) => {
+      bridge = channel.objects.bridge;
+      bridge.snapshot.connect((raw) => apply(JSON.parse(raw)));
+      bridge.ready();
+    });
+  }
+  boot();
+</script>
+</body>
+</html>

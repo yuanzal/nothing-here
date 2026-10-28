@@ -36,6 +36,7 @@ class Tray(QObject):
     loaf_hidden_chosen = pyqtSignal(bool)
     loaf_display_chosen = pyqtSignal(str)
     loaf_status_chosen = pyqtSignal()
+    loaf_board_chosen = pyqtSignal()
     skin_chosen = pyqtSignal(str)
     suppress_chosen = pyqtSignal()
 
@@ -251,6 +252,7 @@ class Tray(QObject):
 
     def _build_loaf_menu(self, menu: QMenu) -> None:
         loaf = menu.addMenu("摸鱼计时")
+        loaf.addAction("打开摸鱼看板").triggered.connect(self.loaf_board_chosen.emit)
         loaf.addAction("设置你的工作状态").triggered.connect(self.loaf_status_chosen.emit)
         self._loaf_displays = _currency_menu(loaf, "货币显示", self.loaf_display_chosen)
         self._loaf_hide = loaf.addAction("隐藏薪条")

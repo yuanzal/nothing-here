@@ -15,6 +15,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QLabel,
     QLineEdit,
+    QSpinBox,
     QVBoxLayout,
 )
 
@@ -54,6 +55,7 @@ class WorkStatusDialog(QDialog):
         end: str,
         lunch_start: str,
         lunch_end: str,
+        payday: int | None = None,
     ) -> None:
         super().__init__()
         self.setWindowTitle("设置你的工作状态")
@@ -79,6 +81,13 @@ class WorkStatusDialog(QDialog):
         for edit in (self._lunch_start, self._lunch_end):
             edit.setEnabled(self._lunch_on.isChecked())
         self._lunch_on.toggled.connect(self._toggle_lunch)
+        self._payday_on = QCheckBox("有发薪日")
+        self._payday_on.setChecked(payday is not None)
+        self._payday = QSpinBox()
+        self._payday.setRange(1, 31)
+        self._payday.setValue(payday if payday is not None else 10)
+        self._payday.setEnabled(self._payday_on.isChecked())
+        self._payday_on.toggled.connect(self._payday.setEnabled)
         form = QFormLayout()
         form.addRow("收入方式", self._mode)
         form.addRow("日薪", self._daily)
@@ -88,6 +97,7 @@ class WorkStatusDialog(QDialog):
         form.addRow("下班终止", self._end)
         form.addRow(self._lunch_on, self._lunch_start)
         form.addRow("", self._lunch_end)
+        form.addRow(self._payday_on, self._payday)
         self._hint = QLabel("时刻可以直接键入，或用上下箭头选。没勾中的那种金额照旧存着。")
         self._hint.setWordWrap(True)
         buttons = QDialogButtonBox(
@@ -114,6 +124,11 @@ class WorkStatusDialog(QDialog):
 
     def commit(self) -> WorkCommit:
         return self._commit
+
+    def payday(self) -> int | None:
+        if not self._payday_on.isChecked():
+            return None
+        return int(self._payday.value())
 
     def _toggle_lunch(self, on: bool) -> None:
         self._lunch_start.setEnabled(on)

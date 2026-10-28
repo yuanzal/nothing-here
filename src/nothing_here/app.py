@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+import json
 import sys
 from dataclasses import replace
 from datetime import date, datetime
@@ -9,12 +10,23 @@ from enum import Enum
 from pathlib import Path
 from typing import Optional
 
-from PyQt6.QtCore import QObject, QThread, QTimer, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QFileDialog
+from PyQt6.QtCore import QObject, QRect, QThread, QTimer, pyqtSignal
+from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from nothing_here.desktop.host import DesktopHost
 from nothing_here.domain.formats import SUPPORTED_SUFFIXES, dialog_filter, extract_book_text
-from nothing_here.domain.loaf import PaySettings, format_clock, needs_rates, strip_text
+from nothing_here.domain.loaf import (
+    Good,
+    PaySettings,
+    accrued,
+    commit_work_times,
+    format_clock,
+    needs_rates,
+    parse_amount,
+    parse_good,
+    parse_payday,
+    strip_text,
+)
 from nothing_here.domain.read import chapter_starts, turn_chapter, turn_page
 from nothing_here.domain.daily import (
     DailyPlan,
@@ -139,6 +151,9 @@ class App(QObject):
         self._pay = _pay_from(loaf)
         self._loaf_hidden = loaf.hidden
         self._loaf_origin = loaf.origin
+        self._board_rect = loaf.board
+        self._goods = self._store.load_goods()
+        self._day_closes = self._store.load_day_closes()
         self._skin_id = skin_for(self._store.load_skin()).skin_id
         self._fx_attempted, fx_raw = self._store.load_fx()
         self._fx_rates = _rates_from(fx_raw)
@@ -146,10 +161,12 @@ class App(QObject):
         self._suppressed = False
         self._closing = False
         self._loaf: Optional[WageStrip] = None
+        self._board = None
+        self._board_held = False
         self._fx_thread: Optional[_RateFetch] = None
         self._loaf_timer = QTimer(self)
         self._loaf_timer.setInterval(1000)
-        self._loaf_timer.timeout.connect(self._refresh_loaf)
+        self._loaf_timer.timeout.connect(self._tick_loaf)
         self._view = ViewState.HIDDEN
         self._face = Face.FRONT
         self._card: Optional[CardWindow | ReadWindow] = None
@@ -198,6 +215,7 @@ class App(QObject):
         self._tray.loaf_hidden_chosen.connect(self.set_loaf_hidden)
         self._tray.loaf_display_chosen.connect(self.set_loaf_display)
         self._tray.loaf_status_chosen.connect(self.edit_work_status)
+        self._tray.loaf_board_chosen.connect(self.open_loaf_board)
         self._tray.skin_chosen.connect(self.set_skin)
         self._tray.suppress_chosen.connect(self.toggle_visibility)
         self._tray.set_skin(self._skin_id)
@@ -222,6 +240,7 @@ class App(QObject):
             self.show_cards()
         self._apply_loaf()
         self._ensure_rates()
+        self._loaf_timer.start()
 
     def set_card_hidden(self, hidden: bool) -> None:
         if hidden:
@@ -356,10 +375,13 @@ class App(QObject):
             if not self._hidden:
                 self.show_cards()
             self._apply_loaf()
+            if self._board_held:
+                self.open_loaf_board()
             return
         card_on = self._view is ViewState.VISIBLE
         loaf_on = self._loaf is not None
-        if not card_on and not loaf_on:
+        board_on = self._board is not None and self._board.isVisible()
+        if not card_on and not loaf_on and not board_on:
             return
         self._suppressed = True
         if card_on:
@@ -369,6 +391,9 @@ class App(QObject):
             self._view = ViewState.HIDDEN
             self._face = Face.FRONT
         self._close_loaf()
+        self._board_held = board_on
+        if board_on and self._board is not None:
+            self._board.hide()
 
     def switch_source(self, source_id: str) -> None:
         if self._burning or self._surface_id != "word" or source_id not in self._source_by_id:
@@ -464,6 +489,7 @@ class App(QObject):
         self._sync_style_tray()
         self._apply_style()
         self._persist()
+        self._push_board()
 
     def set_skin(self, skin_id: str) -> None:
         chosen = skin_for(skin_id).skin_id
@@ -477,6 +503,7 @@ class App(QObject):
         if self._loaf is not None:
             self._loaf.apply_skin(skin_for(chosen))
             self._place_loaf()
+        self._push_board()
 
     def choose_custom_style(self, text: str, fill: str, alpha: int) -> None:
         self._style_preset = "custom"
@@ -486,6 +513,7 @@ class App(QObject):
         self._sync_style_tray()
         self._apply_style()
         self._persist()
+        self._push_board()
 
     def choose_surface(self, surface_id: str) -> None:
         if surface_id not in ("word", "read"):
@@ -594,6 +622,7 @@ class App(QObject):
             return
         self._pay = replace(self._pay, display=display)
         self._sync_loaf()
+        self._push_board()
 
     def edit_work_status(self) -> None:
         dialog = WorkStatusDialog(
@@ -605,11 +634,14 @@ class App(QObject):
             _clock_text(self._pay.work_end),
             _clock_text(self._pay.lunch_start),
             _clock_text(self._pay.lunch_end),
+            self._pay.payday,
         )
         if dialog.exec() != dialog.DialogCode.Accepted:
+            self._push_board()
             return
         result = dialog.commit()
         if not result.ok:
+            self._push_board()
             return
         self._pay = replace(
             self._pay,
@@ -621,8 +653,152 @@ class App(QObject):
             work_end=result.work_end,
             lunch_start=result.lunch_start,
             lunch_end=result.lunch_end,
+            payday=dialog.payday(),
         )
         self._sync_loaf()
+        self._push_board()
+
+    def open_loaf_board(self) -> None:
+        if self._suppressed:
+            self._suppressed = False
+            self._apply_loaf()
+        if self._board is not None:
+            self._board_held = True
+            self._board.show()
+            self._board.raise_()
+            self._board.activateWindow()
+            self._push_board()
+            return
+        try:
+            from nothing_here.ui.loaf_board import LoafBoard
+        except ImportError:
+            QMessageBox.warning(None, "摸鱼看板", "需要安装 PyQt6-WebEngine。")
+            return
+        board = LoafBoard()
+        board.pay_saved.connect(self._on_board_pay)
+        board.goods_saved.connect(self._on_board_goods)
+        board.clear_asked.connect(self._on_board_clear)
+        board.closed.connect(self._on_board_closed)
+        board.moved_to.connect(self._on_board_moved)
+        if self._board_rect is not None:
+            board.setGeometry(QRect(*self._board_rect))
+        self._board = board
+        self._board_held = True
+        board.show()
+        self._push_board()
+
+    def _on_board_pay(self, raw: str) -> None:
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            self._push_board()
+            return
+        unit = str(data.get("unit") or "")
+        daily = parse_amount(str(data.get("daily") or ""), unit)
+        monthly = parse_amount(str(data.get("monthly") or ""), unit)
+        if daily is None or monthly is None:
+            return
+        result = commit_work_times(
+            str(data.get("work_start") or ""),
+            str(data.get("work_end") or ""),
+            str(data.get("lunch_start") or ""),
+            str(data.get("lunch_end") or ""),
+        )
+        if not result.ok:
+            return
+        payday = parse_payday(str(data.get("payday") or ""))
+        mode = str(data.get("pay_mode") or "daily")
+        if mode not in ("daily", "monthly"):
+            mode = "daily"
+        self._pay = replace(
+            self._pay,
+            pay_mode=mode,
+            daily_amount=daily,
+            monthly_amount=monthly,
+            unit=unit,
+            work_start=result.work_start,
+            work_end=result.work_end,
+            lunch_start=result.lunch_start,
+            lunch_end=result.lunch_end,
+            payday=payday,
+        )
+        self._sync_loaf()
+        self._push_board()
+
+    def _on_board_goods(self, raw: str) -> None:
+        try:
+            rows = json.loads(raw)
+        except json.JSONDecodeError:
+            self._push_board()
+            return
+        if not isinstance(rows, list):
+            return
+        goods: list[Good] = []
+        seen = False
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            shown = bool(row.get("shown")) and not seen
+            if shown:
+                seen = True
+            item = parse_good(
+                str(row.get("key") or ""),
+                str(row.get("name") or ""),
+                str(row.get("price") or ""),
+                str(row.get("unit_label") or ""),
+                self._pay.unit,
+                shown,
+            )
+            if item is None:
+                continue
+            goods.append(item)
+        if goods and not any(item.shown for item in goods):
+            first = goods[0]
+            goods[0] = Good(first.key, first.name, first.price, first.unit_label, True)
+        self._goods = tuple(goods)
+        self._store.save_goods(self._goods)
+        self._push_board()
+
+    def _on_board_clear(self) -> None:
+        if self._board is None or not self._board.confirm_clear():
+            return
+        self._store.clear_day_closes()
+        self._day_closes = {}
+        self._push_board()
+
+    def _on_board_closed(self) -> None:
+        if self._suppressed:
+            return
+        self._board_held = False
+        self._board = None
+
+    def _on_board_moved(self, x: int, y: int, w: int, h: int) -> None:
+        self._board_rect = (x, y, w, h)
+        self._persist_loaf()
+
+    def _push_board(self) -> None:
+        if self._board is None:
+            return
+        from nothing_here.ui.loaf_board import board_payload, board_theme
+
+        self._board.push(
+            board_payload(
+                self._pay,
+                datetime.now(),
+                self._goods,
+                self._day_closes,
+                board_theme(self._style_preset, self._text_color, self._button_preset),
+                self._fx_rates,
+            )
+        )
+
+    def _close_board(self) -> None:
+        if self._board is None:
+            return
+        board = self._board
+        self._board = None
+        self._board_held = False
+        board.close()
 
     def quit(self) -> None:
         self._take_pending_slay()
@@ -909,17 +1085,25 @@ class App(QObject):
         self._loaf_origin = self._host.move(strip, origin[0], origin[1])
         strip.show()
         self._loaf = strip
-        self._loaf_timer.start()
         return True
 
     def _close_loaf(self) -> None:
-        self._loaf_timer.stop()
         if self._loaf is None:
             return
         self._loaf.hide()
         self._loaf.close()
         self._loaf.deleteLater()
         self._loaf = None
+
+    def _tick_loaf(self) -> None:
+        now = datetime.now()
+        today = now.date().isoformat()
+        amount = accrued(self._pay, now)
+        if self._day_closes.get(today) != amount:
+            self._day_closes[today] = amount
+            self._store.save_day_close(today, amount)
+        self._refresh_loaf()
+        self._push_board()
 
     def _refresh_loaf(self) -> None:
         if self._loaf is None:
@@ -986,6 +1170,7 @@ class App(QObject):
             {str(key): format(value, "f") for key, value in rates.items()},
         )
         self._refresh_loaf()
+        self._push_board()
 
     def _persist(self) -> None:
         self._store.save_state(
@@ -1039,6 +1224,8 @@ class App(QObject):
                 lunch_start=self._pay.lunch_start,
                 lunch_end=self._pay.lunch_end,
                 origin=self._loaf_origin,
+                payday=self._pay.payday,
+                board=self._board_rect,
             )
         )
 
@@ -1088,6 +1275,7 @@ class App(QObject):
             self._dress(self._card)
         if self._loaf is not None:
             self._dress(self._loaf)
+        self._push_board()
 
     def _palette(self):
         return skin_for(self._skin_id).palette(
@@ -1126,6 +1314,7 @@ class App(QObject):
         self._day_timer.stop()
         self._loaf_timer.stop()
         self._close_loaf()
+        self._close_board()
         self._destroy_windows()
         self._store.close()
 
@@ -1321,6 +1510,7 @@ def _pay_from(record: LoafRecord) -> PaySettings:
         work_end=record.work_end,
         lunch_start=record.lunch_start,
         lunch_end=record.lunch_end,
+        payday=record.payday,
     )
 
 
@@ -1379,6 +1569,10 @@ def acquire_instance(name: str = INSTANCE_NAME) -> Optional[_SingleInstance]:
 
 def main() -> int:
     _set_app_id()
+    try:
+        import PyQt6.QtWebEngineWidgets  # noqa: F401
+    except ImportError:
+        pass
     qt_app = QApplication(sys.argv)
     qt_app.setApplicationName("Nothing Here")
     qt_app.setQuitOnLastWindowClosed(False)
