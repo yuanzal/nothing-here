@@ -22,7 +22,7 @@ Nothing Here 不是全屏背单词 App。它是贴在壁纸层（或浮在窗口
 | **风格** | 极简无痕：浅色、黑底白字、自定义文字色；底面透明 |
 | **桌面嵌入** | 默认贴桌面图标层；可「浮在窗口上」 |
 | **阅读** | 导入 txt、md、html、epub、docx、odt、fb2，按页和章翻 |
-| **摸鱼计时** | 薪条按工作时段累计今日薪资；货币显示按日牌价换算 |
+| **摸鱼计时** | 薪条按工作时段累计今日薪资；货币显示按日牌价换算；托盘可打开摸鱼看板 |
 
 操作说明：[`使用教程.md`](使用教程.md)。术语以 [`GLOSSARY.md`](GLOSSARY.md) 为准。
 
@@ -30,7 +30,7 @@ Nothing Here 不是全屏背单词 App。它是贴在壁纸层（或浮在窗口
 
 - Windows 10 及以上
 - Python 3.9+（开发常用 3.12 / 3.14）
-- 依赖见 [`requirements.txt`](requirements.txt)：`PyQt6`、`pynput`
+- 依赖见 [`requirements.txt`](requirements.txt)：`PyQt6`、`PyQt6-WebEngine`、`pynput`
 
 若前台有**管理员权限**程序占用全局热键，需用管理员身份启动，或先离开该程序。
 
