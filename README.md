@@ -1,29 +1,28 @@
 <p align="center">
-  <img src="./assets/readme/hero.svg" width="100%" alt="Nothing Here：贴在 Windows 壁纸层的无边框透明卡片，单词、阅读和摸鱼薪条共用一张桌面">
+  <img src="./assets/readme/hero.svg" width="100%" alt="Nothing Here：贴在 Windows 壁纸层的摸鱼卡片，具有无痕隐蔽的背单词与阅读功能，负责揽下你在工作中的一切摸鱼事务">
 </p>
 
-Nothing Here 不是全屏背单词 App。它是贴在壁纸层（或浮在窗口上）的轻量卡片；学习记录只落在本机。托盘名称是 **Nothing Here**（任务栏不出现「背单词」「雅思」）。同一时间只运行一个实例。
+Nothing Here 是一个贴在壁纸层（或浮在窗口上）的轻量摸鱼卡片。任务栏托盘名称是 **Nothing Here**。同一时间只运行一个实例。
 
 现在可用的功能面是**单词**（含拼写测试）和**阅读**。托盘里的**考试**仍是预留入口。
 
 <p align="center">
-  <img src="./assets/readme/workflow.svg" width="100%" alt="同一张卡：正面只看词，反面认识或不认识，薪条单独显示今日累计">
+  <img src="./assets/readme/workflow.svg" width="100%" alt="单词状态下卡片默认不显示译文，可切换成背诵状态并标记认识/不认识，摸鱼薪资单独成片，实时计数">
 </p>
 
 ## 现在能做什么
 
 | 能力 | 说明 |
 | --- | --- |
-| **背单词** | 雅思 / 四级 / 六级 / 考研；音标、释义、真实英文例句 |
-| **拼写测试** | 达标后可邀请进入；逐格输入 |
-| **每日目标** | 「不认识」收入名单，收满后按「目标 → 目标 → 熟词」轮换抽查 |
+| **背单词** | 雅思 / 四级 / 六级 / 考研 / 日语；音标或读音、释义、词条例句 |
+| **拼写测试** | 达到一定正确率后会发出邀请进入 / 主动在托盘触发 |
+| **每日目标** | 「不认识」收入名单，满足今日背诵目标数量后进入抽查模式（会附带复习） |
 | **斩杀与回收站** | 熟练词可移出抽卡池，托盘里恢复 |
-| **正反面** | 正面只看词；译文/例句后认识或不认识；`Ctrl+Alt+S` 全部隐藏 |
-| **风格** | 极简无痕：浅色、黑底白字、自定义文字色；底面透明 |
-| **桌面嵌入** | 默认贴桌面图标层；可「浮在窗口上」 |
-| **阅读** | 导入 txt、md、html、epub、docx、odt、fb2，按页和章翻 |
-| **摸鱼计时** | 薪条按工作时段累计今日薪资；货币显示按日牌价换算；托盘可打开摸鱼看板 |
-
+| **风格** | 极简无痕：浅色、黑底白字、自定义文字色 |
+| **桌面嵌入** | 默认紧贴桌面，可调节为「浮在窗口上」，支持随时随地摸鱼 |
+| **阅读** | 导入 txt、md、html、epub、docx、odt、fb2阅读，会记录阅读位置 |
+| **摸鱼计时** | 薪条按工作时段累计今日摸鱼薪资，托盘可打开摸鱼统计看板 |
+| **隐藏热键** | Ctrl+Alt+S一键全部隐藏，也可以切换卡片单独隐藏状态 |
 操作说明：[`使用教程.md`](使用教程.md)。术语以 [`GLOSSARY.md`](GLOSSARY.md) 为准。
 
 ## 环境
@@ -52,7 +51,7 @@ $env:PYTHONPATH = "src"
 .\.venv\Scripts\python.exe -m nothing_here
 ```
 
-系统托盘：深色圆角 **N**，悬停 **Nothing Here**。右键可显隐卡片、改每日目标、回收站、风格、功能面、词库、摸鱼计时。
+系统托盘：深色圆角 **N**，悬停 **Nothing Here**。右键打开托盘进行控制，显隐卡片、风格、功能面、摸鱼计时。
 
 进度文件：`%APPDATA%\NothingHere\study.db`
 
@@ -106,7 +105,8 @@ class Entry:
 
 class VocabSource(Protocol):
     source_id: str      # 唯一，如 "cet4"
-    display_name: str   # 托盘显示，如 "四级"
+    display_name: str   # 托盘词表名，如 "四级" / "N3"
+    family: str         # 托盘一级目录，如 "英语" / "日语"
     def iter_entries(self) -> Iterable[Entry]: ...
 ```
 
@@ -136,7 +136,7 @@ class VocabSource(Protocol):
    def load_sources() -> list[VocabSource]:
        return [
            # ...已有...
-           JsonVocabSource("toefl", "托福", data_file("toefl.json")),
+           JsonVocabSource("toefl", "托福", data_file("toefl.json"), "英语"),
        ]
    ```
 
@@ -157,7 +157,7 @@ JSON 形态：
 
 ### 方式 B：自写 `VocabSource`
 
-实现 `source_id` / `display_name` / `iter_entries()`，在 `load_sources()` 里追加即可。数据可以来自别的文件格式或只读远程镜像，只要返回 `Entry`；**运行时是否联网由你自己约束**（现有词库约定：运行时不联网）。
+实现 `source_id` / `display_name` / `family` / `iter_entries()`，在 `load_sources()` 里追加即可。数据可以来自别的文件格式或只读远程镜像，只要返回 `Entry`；**运行时是否联网由你自己约束**（现有词库约定：运行时不联网）。
 
 ### 例句来源
 
@@ -178,11 +178,13 @@ class ExampleSource(Protocol):
 | `cet4` | 四级 | `data/cet4.json` | `cet4` |
 | `cet6` | 六级 | `data/cet6.json` | `cet6` |
 | `ky` | 考研 | `data/ky.json` | `ky` |
+| `jp_n5` … `jp_n1` | N5–N1 | `data/jp_n5.json` … | OpenJLPT 词表 + Tomoshi 中文释义 |
 
-- 重建词库：`python scripts/build_ecdict.py path/to/ecdict.csv --all`
-- 补例句：`python scripts/example_sentences.py data/cet4.json data/cet6.json data/ky.json`  
+- 重建英语词库：`python scripts/build_ecdict.py path/to/ecdict.csv --all`
+- 重建日语词库：`python scripts/build_jlpt.py`（按 N5–N1 各写一份；缓存 `data/cache/openjlpt/` 与 `data/cache/tomoshi/` 已 gitignore。首次需要能解压 `.zst` 的 `zstandard`）
+- 补英语例句：`python scripts/example_sentences.py data/cet4.json data/cet6.json data/ky.json`  
   （会下载/使用 `data/cache/` 下的 Tatoeba 导出；该目录已 gitignore）
-- **应用运行时不访问网络。**
+- **应用运行时不访问网络。** 拼写输入不另做日语模式，交给系统输入法。
 
 </details>
 
