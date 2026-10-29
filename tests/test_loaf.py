@@ -23,6 +23,7 @@ from nothing_here.domain.loaf import (
     strip_text,
     work_progress,
 )
+from nothing_here.paths import ui_text
 from nothing_here.ui.skins import skin_for
 from nothing_here.fx import parse_eur_rates, parse_vnd_rate
 from nothing_here.storage.db import LoafRecord, Store
@@ -271,6 +272,11 @@ class SkinTests(unittest.TestCase):
         self.assertIs(skin_for("cute"), plain)
         self.assertLessEqual(plain.strip_metrics.pad_x, 12)
         self.assertEqual(plain.strip_metrics.min_width, 1)
+
+    def test_loaf_board_html_is_bundled_with_ui_assets(self) -> None:
+        page = ui_text("loaf_board.html")
+        self.assertIn("摸鱼看板", page)
+        self.assertIn("<!DOCTYPE html>", page)
 
 
 if __name__ == "__main__":

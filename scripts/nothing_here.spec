@@ -12,6 +12,7 @@ datas = [
     (str(root / "data" / "cet6.json"), "data"),
     (str(root / "data" / "ky.json"), "data"),
     (str(root / "src" / "nothing_here" / "ui" / "rose.svg"), str(Path("nothing_here") / "ui")),
+    (str(root / "src" / "nothing_here" / "ui" / "loaf_board.html"), str(Path("nothing_here") / "ui")),
 ]
 
 a = Analysis(
@@ -23,7 +24,11 @@ a = Analysis(
         "nothing_here.app",
         "nothing_here.ui.card_window",
         "nothing_here.ui.tray",
+        "nothing_here.ui.loaf_board",
         "PyQt6.QtSvg",
+        "PyQt6.QtWebChannel",
+        "PyQt6.QtWebEngineCore",
+        "PyQt6.QtWebEngineWidgets",
     ],
     hookspath=[],
     hooksconfig={},

@@ -21,8 +21,18 @@ def data_file(name: str) -> Path:
 
 
 def ui_asset(name: str) -> Path:
-    # Frozen builds extract rose.svg to nothing_here/ui (see scripts/nothing_here.spec).
+    # Frozen builds extract ui files to nothing_here/ui (see scripts/nothing_here.spec).
     # In a source checkout the file sits next to this package, under src/.
     if getattr(sys, "frozen", False) and hasattr(sys, "_MEIPASS"):
         return Path(sys._MEIPASS) / "nothing_here" / "ui" / name
     return Path(__file__).resolve().parent / "ui" / name
+
+
+def ui_text(name: str) -> str:
+    """Read a bundled UI file as text. Frozen builds use the extracted datas copy."""
+    path = ui_asset(name)
+    if path.is_file():
+        return path.read_text(encoding="utf-8")
+    from importlib.resources import files
+
+    return files("nothing_here.ui").joinpath(name).read_text(encoding="utf-8")

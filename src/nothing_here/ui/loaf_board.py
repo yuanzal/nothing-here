@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from decimal import Decimal
-from pathlib import Path
 from typing import Mapping, Optional
 
 from PyQt6.QtCore import QObject, QUrl, Qt, pyqtSignal, pyqtSlot
@@ -15,6 +14,7 @@ from PyQt6.QtWebEngineCore import QWebEngineScript, QWebEngineSettings
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QMainWindow, QMessageBox
 
+from nothing_here.paths import ui_text
 from nothing_here.domain.loaf import (
     CURRENCY_LABELS,
     Good,
@@ -38,9 +38,6 @@ from nothing_here.domain.loaf import (
     work_hours,
     work_progress,
 )
-
-_HTML = Path(__file__).with_name("loaf_board.html")
-
 
 class BoardBridge(QObject):
     snapshot = pyqtSignal(str)
@@ -99,7 +96,12 @@ class LoafBoard(QMainWindow):
         script.setInjectionPoint(QWebEngineScript.InjectionPoint.DocumentCreation)
         script.setWorldId(QWebEngineScript.ScriptWorldId.MainWorld)
         self._view.page().scripts().insert(script)
-        self._view.load(QUrl.fromLocalFile(str(_HTML.resolve())))
+        try:
+            html = ui_text("loaf_board.html")
+        except (FileNotFoundError, OSError):
+            QMessageBox.warning(self, "摸鱼看板", "找不到看板页面。")
+            return
+        self._view.setHtml(html)
 
     def push(self, payload: dict) -> None:
         raw = json.dumps(payload, ensure_ascii=False)
