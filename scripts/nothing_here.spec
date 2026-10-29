@@ -11,6 +11,11 @@ datas = [
     (str(root / "data" / "cet4.json"), "data"),
     (str(root / "data" / "cet6.json"), "data"),
     (str(root / "data" / "ky.json"), "data"),
+    (str(root / "data" / "jp_n5.json"), "data"),
+    (str(root / "data" / "jp_n4.json"), "data"),
+    (str(root / "data" / "jp_n3.json"), "data"),
+    (str(root / "data" / "jp_n2.json"), "data"),
+    (str(root / "data" / "jp_n1.json"), "data"),
     (str(root / "src" / "nothing_here" / "ui" / "rose.svg"), str(Path("nothing_here") / "ui")),
     (str(root / "src" / "nothing_here" / "ui" / "loaf_board.html"), str(Path("nothing_here") / "ui")),
 ]

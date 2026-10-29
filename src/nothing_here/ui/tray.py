@@ -94,8 +94,14 @@ class Tray(QObject):
         self._group = QActionGroup(menu)
         self._group.setExclusive(True)
         self._source_actions: dict[str, QAction] = {}
+        families: dict[str, QMenu] = {}
         for source in sources:
-            action = vocab_menu.addAction(source.display_name)
+            family = source.family.strip() or "其他"
+            submenu = families.get(family)
+            if submenu is None:
+                submenu = vocab_menu.addMenu(family)
+                families[family] = submenu
+            action = submenu.addAction(source.display_name)
             action.setCheckable(True)
             action.setData(source.source_id)
             action.setChecked(source.source_id == active_source)

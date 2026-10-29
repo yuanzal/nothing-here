@@ -15,6 +15,7 @@ class Entry:
 class VocabSource(Protocol):
     source_id: str
     display_name: str
+    family: str
 
     def iter_entries(self) -> Iterable[Entry]:
         ...

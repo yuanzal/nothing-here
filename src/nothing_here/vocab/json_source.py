@@ -8,9 +8,10 @@ from .protocol import Entry
 
 
 class JsonVocabSource:
-    def __init__(self, source_id: str, display_name: str, path: Path) -> None:
+    def __init__(self, source_id: str, display_name: str, path: Path, family: str) -> None:
         self.source_id = source_id
         self.display_name = display_name
+        self.family = family
         self._path = path
         self._entries: list[Entry] | None = None
 

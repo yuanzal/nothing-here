@@ -1488,6 +1488,8 @@ def _book_after(ids: list[str], removed: str) -> Optional[str]:
 
 def _pick_source(sources: list[VocabSource], wanted: str) -> str:
     ids = {source.source_id for source in sources}
+    if wanted == "jp":
+        wanted = "jp_n5"
     if wanted in ids:
         return wanted
     return sources[0].source_id

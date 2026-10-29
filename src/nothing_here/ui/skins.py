@@ -1,6 +1,6 @@
 """卡片和薪条共用的外观。
 
-现在只有「极简无痕」：底透明、无边框，下面再选浅色、黑底白字或自定义文字色。
+现在只有「极简无痕」：底透明、无边框，下面再选浅色、深色或自定义文字色。
 以后要加可爱、清新这类风格，在本文件写一个类并 register_skin：
 
 - label：托盘里的名字
@@ -80,7 +80,7 @@ class PlainSkin:
     label = "极简无痕"
     color_modes = (
         ColorMode("light", "浅色"),
-        ColorMode("dark", "黑底白字"),
+        ColorMode("dark", "深色"),
         ColorMode("custom", "自定义…", custom=True),
     )
     strip_metrics = StripMetrics(

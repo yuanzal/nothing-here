@@ -63,7 +63,7 @@ class ExampleTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            source = JsonVocabSource("sample", "样例", path)
+            source = JsonVocabSource("sample", "样例", path, "英语")
             entries = {entry.word: entry for entry in source.iter_entries()}
             self.assertEqual(entries["alpha"].example, "")
             self.assertEqual(entries["beta"].example, "Beta comes next.")

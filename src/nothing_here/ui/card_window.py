@@ -663,6 +663,7 @@ class CardWindow(QWidget):
 
 def _px_font(family: str, px: int, bold: bool = False) -> QFont:
     font = QFont(family)
+    font.setFamilies([family, "Yu Gothic UI", "Microsoft YaHei", "Segoe UI"])
     font.setPixelSize(px)
     if bold:
         font.setWeight(QFont.Weight.DemiBold)
