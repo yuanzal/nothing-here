@@ -18,13 +18,17 @@ if (-not (Test-Path (Join-Path $DistDir "NothingHere.exe"))) {
     Write-Error "Build failed: NothingHere.exe not found in dist\NothingHere"
 }
 
-$ZipPath = Join-Path $Root "dist\NothingHere-win64.zip"
+$Version = & $Python (Join-Path $Root "scripts\package_version.py")
+if (-not $Version) {
+    Write-Error "Could not read package version"
+}
+$ZipPath = Join-Path $Root "dist\NothingHere-$Version-win64.zip"
 if (Test-Path $ZipPath) { Remove-Item $ZipPath -Force }
 Compress-Archive -Path (Join-Path $DistDir "*") -DestinationPath $ZipPath -Force
 
 Write-Host ""
 Write-Host "Done."
 Write-Host "  Folder: dist\NothingHere\"
-Write-Host "  Zip:    dist\NothingHere-win64.zip"
+Write-Host "  Zip:    dist\NothingHere-$Version-win64.zip"
 Write-Host ""
 Write-Host "Test: run dist\NothingHere\NothingHere.exe (only one instance at a time)."

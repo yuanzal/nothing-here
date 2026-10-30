@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import Optional, Sequence
 
-from PyQt6.QtCore import QObject, Qt, pyqtSignal
-from PyQt6.QtGui import QAction, QActionGroup, QColor, QFont, QIcon, QPainter, QPixmap
+from PyQt6.QtCore import QObject, pyqtSignal
+from PyQt6.QtGui import QAction, QActionGroup, QColor
 from PyQt6.QtWidgets import QColorDialog, QInputDialog, QMenu, QMessageBox, QSystemTrayIcon
 
 from nothing_here.domain.daily import GOAL_MAX, GOAL_MIN
 from nothing_here.domain.loaf import CURRENCY_LABELS
+from nothing_here.ui.app_mark import app_icon
 from nothing_here.ui.skins import skins
 
 _CARD_LEVELS = (("large", "大"), ("medium", "中"), ("small", "小"))
@@ -71,7 +72,7 @@ class Tray(QObject):
         self._spell_tray = spell_tray
         self._current_book = current_book
         self._book_titles: dict[str, str] = {}
-        self._icon = QSystemTrayIcon(make_tray_icon())
+        self._icon = QSystemTrayIcon(app_icon())
         self._icon.setToolTip("Nothing Here")
         menu = QMenu()
         self._card_hide = menu.addAction("隐藏卡片")
@@ -448,20 +449,3 @@ def _text_seed(preset: str, text_color: Optional[str]) -> QColor:
         return QColor("#F5F5F5")
     return QColor("#1C1C1C")
 
-
-def make_tray_icon() -> QIcon:
-    pixmap = QPixmap(64, 64)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor(28, 28, 28, 235))
-    painter.drawRoundedRect(4, 4, 56, 56, 12, 12)
-    painter.setPen(QColor("#F5F5F5"))
-    font = QFont("Segoe UI")
-    font.setPixelSize(28)
-    font.setWeight(QFont.Weight.DemiBold)
-    painter.setFont(font)
-    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "N")
-    painter.end()
-    return QIcon(pixmap)

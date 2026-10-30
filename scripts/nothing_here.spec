@@ -5,6 +5,7 @@ from pathlib import Path
 
 block_cipher = None
 root = Path(SPECPATH).resolve().parent
+icon_file = str(root / "assets" / "app.ico")
 
 datas = [
     (str(root / "data" / "ielts.json"), "data"),
@@ -63,6 +64,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon=icon_file,
 )
 
 coll = COLLECT(

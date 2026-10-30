@@ -13,6 +13,7 @@ from typing import Optional
 from PyQt6.QtCore import QObject, QRect, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
+from nothing_here import __version__
 from nothing_here.desktop.host import DesktopHost
 from nothing_here.domain.formats import SUPPORTED_SUFFIXES, dialog_filter, extract_book_text
 from nothing_here.domain.loaf import (
@@ -58,6 +59,7 @@ from nothing_here.domain.spell import (
 from nothing_here.fx import fetch_eur_rates
 from nothing_here.input.hotkey import HotkeyListener
 from nothing_here.storage.db import AppState, DailyRecord, LoafRecord, Store
+from nothing_here.ui.app_mark import app_icon
 from nothing_here.ui.card_window import CardWindow, Face
 from nothing_here.ui.read_window import READ_CARD_SIZE, READ_FONT_PX, READ_LEADING, ReadWindow
 from nothing_here.ui.skins import skin_for
@@ -1577,6 +1579,8 @@ def main() -> int:
         pass
     qt_app = QApplication(sys.argv)
     qt_app.setApplicationName("Nothing Here")
+    qt_app.setApplicationVersion(__version__)
+    qt_app.setWindowIcon(app_icon())
     qt_app.setQuitOnLastWindowClosed(False)
     instance = acquire_instance()
     if instance is None:

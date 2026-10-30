@@ -215,7 +215,7 @@ git tag v0.3.0
 git push origin v0.3.0
 ```
 
-本地试打包：`.\scripts\build_release.ps1` → `dist\NothingHere-win64.zip`。
+本地试打包：`.\scripts\build_release.ps1` → `dist\NothingHere-<version>-win64.zip`（版本取自 `src/nothing_here/__init__.py`）。
 
 Tag 页上的 Source code zip 只是源码；安装包在 **Releases** 的 Assets 里。
 

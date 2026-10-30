@@ -29,10 +29,11 @@ jobs:
       - name: Create zip
         shell: pwsh
         run: |
-          Compress-Archive -Path dist/NothingHere/* -DestinationPath dist/NothingHere-win64.zip -Force
+          $Version = python scripts/package_version.py
+          Compress-Archive -Path dist/NothingHere/* -DestinationPath "dist/NothingHere-$Version-win64.zip" -Force
 
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/NothingHere-win64.zip
+          files: dist/NothingHere-*-win64.zip
           generate_release_notes: true
