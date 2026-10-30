@@ -1,3 +1,5 @@
-PyQt6>=6.6.0
-PyQt6-WebEngine>=6.6.0
+# PyQt6-WebEngine lags PyQt6. Uncapped installs mix Qt 6.12 core with 6.11 WebEngine
+# and the frozen 摸鱼看板 fails to import (seen as “需要安装 PyQt6-WebEngine”).
+PyQt6==6.11.2
+PyQt6-WebEngine==6.11.2
 pynput>=1.7.6

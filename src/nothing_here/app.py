@@ -673,8 +673,8 @@ class App(QObject):
             return
         try:
             from nothing_here.ui.loaf_board import LoafBoard
-        except ImportError:
-            QMessageBox.warning(None, "摸鱼看板", "需要安装 PyQt6-WebEngine。")
+        except ImportError as exc:
+            QMessageBox.warning(None, "摸鱼看板", _webengine_missing_text(exc))
             return
         board = LoafBoard()
         board.pay_saved.connect(self._on_board_pay)
@@ -1569,6 +1569,12 @@ def acquire_instance(name: str = INSTANCE_NAME) -> Optional[_SingleInstance]:
             kernel32.CloseHandle(handle)
         return None
     return _SingleInstance(int(handle))
+
+
+def _webengine_missing_text(exc: BaseException) -> str:
+    if getattr(sys, "frozen", False):
+        return f"摸鱼看板的网页引擎加载失败。\n{exc}"
+    return "需要安装 PyQt6-WebEngine。"
 
 
 def main() -> int:
