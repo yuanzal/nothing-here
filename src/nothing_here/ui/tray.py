@@ -11,7 +11,8 @@ from nothing_here.domain.loaf import CURRENCY_LABELS
 from nothing_here.ui.app_mark import app_icon
 from nothing_here.ui.skins import skins
 
-_CARD_LEVELS = (("large", "大"), ("medium", "中"), ("small", "小"))
+_CARD_LEVELS = (("large", "大"), ("medium", "中"), ("small", "小"), ("tiny", "极小"))
+_FONT_LEVELS = (("large", "大"), ("medium", "中"), ("small", "小"))
 _LEADING_LEVELS = (("loose", "大"), ("medium", "中"), ("tight", "小"))
 
 
@@ -83,7 +84,7 @@ class Tray(QObject):
         self._font_menu = menu.addMenu("字号")
         self._leading_menu = menu.addMenu("行距")
         self._card_actions = _exclusive_levels(self._card_menu, _CARD_LEVELS, read_card, self.read_card_chosen)
-        self._font_actions = _exclusive_levels(self._font_menu, _CARD_LEVELS, read_font, self.read_font_chosen)
+        self._font_actions = _exclusive_levels(self._font_menu, _FONT_LEVELS, read_font, self.read_font_chosen)
         self._leading_actions = _exclusive_levels(
             self._leading_menu, _LEADING_LEVELS, read_leading, self.read_leading_chosen
         )

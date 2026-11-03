@@ -149,3 +149,15 @@ class BookStoreTests(unittest.TestCase):
             self.assertFalse(Path(books[0].path).exists())
             self.assertEqual([book.book_id for book in again.list_books()], [second.book_id])
             again.close()
+
+    def test_tiny_card_size_round_trips(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "study.db"
+            store = Store(path)
+            store.save_state(
+                AppState(hidden=False, active_source="ielts", word=None, read_card="tiny")
+            )
+            store.close()
+            again = Store(path)
+            self.assertEqual(again.load_state().read_card, "tiny")
+            again.close()

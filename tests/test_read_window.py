@@ -10,7 +10,7 @@ from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication, QPushButton
 
-from nothing_here.ui.read_window import ReadWindow
+from nothing_here.ui.read_window import READ_CARD_SIZE, ReadWindow
 
 _APP = QApplication.instance() or QApplication([])
 
@@ -23,6 +23,10 @@ def _show(card: ReadWindow) -> None:
 
 
 class ReadNavTests(unittest.TestCase):
+    def test_tiny_card_is_smaller_than_small(self) -> None:
+        self.assertLess(READ_CARD_SIZE["tiny"][0], READ_CARD_SIZE["small"][0])
+        self.assertLess(READ_CARD_SIZE["tiny"][1], READ_CARD_SIZE["small"][1])
+
     def test_nav_order_is_chapter_page_page_chapter(self) -> None:
         card = ReadWindow()
         nav = card._nav.layout()

@@ -21,6 +21,7 @@ from nothing_here.ui.style import LIGHT, CardPalette
 PADDING = 16
 EMPTY_TEXT = "导入一本书开始阅读"
 READ_CARD_SIZE = {
+    "tiny": (220, 280),
     "small": (280, 360),
     "medium": (320, 480),
     "large": (400, 640),

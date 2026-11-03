@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
@@ -11,8 +11,10 @@ from nothing_here.domain.loaf import (
     buyable,
     commit_work_times,
     days_until_payday,
+    cn_workday,
     month_accrued,
     month_remaining,
+    remaining_workdays,
     needs_rates,
     parse_amount,
     parse_clock,
@@ -142,10 +144,25 @@ class BoardMathTests(unittest.TestCase):
         self.assertEqual(month_accrued(_pay(), moment, closes), Decimal(100) + today)
         self.assertEqual(month_accrued(_pay(), moment, {}), today)
 
-    def test_month_remaining_is_unfinished_today_plus_later_calendar_days(self) -> None:
+    def test_month_remaining_uses_china_workdays(self) -> None:
         today = Decimal(100) * Decimal(2) / Decimal(9)
-        left = month_remaining(_pay(), datetime(2026, 10, 22, 11, 0))
-        self.assertEqual(left, Decimal(100) - today + Decimal(900))
+        moment = datetime(2026, 10, 22, 11, 0)
+        self.assertTrue(cn_workday(moment.date()))
+        self.assertEqual(remaining_workdays(moment), 6)
+        left = month_remaining(_pay(), moment)
+        self.assertEqual(left, Decimal(100) - today + Decimal(600))
+
+    def test_month_remaining_skips_holiday_today_and_counts_tiaoxiu(self) -> None:
+        holiday = datetime(2026, 10, 1, 11, 0)
+        self.assertFalse(cn_workday(holiday.date()))
+        self.assertEqual(month_remaining(_pay(), holiday), Decimal(100) * remaining_workdays(holiday))
+        makeup = datetime(2026, 10, 10, 11, 0)
+        self.assertTrue(cn_workday(date(2026, 10, 10)))
+        today = Decimal(100) * Decimal(2) / Decimal(9)
+        self.assertEqual(
+            month_remaining(_pay(), makeup),
+            Decimal(100) - today + Decimal(100) * remaining_workdays(makeup),
+        )
 
     def test_countdown_runs_through_lunch_and_progress_freezes(self) -> None:
         settings = _pay(lunch_start=12 * 60, lunch_end=13 * 60)

@@ -8,6 +8,8 @@ from datetime import date, datetime
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Mapping, Optional
 
+from chinese_calendar import is_workday
+
 CURRENCIES: tuple[str, ...] = ("CNY", "USD", "EUR", "JPY", "KRW", "SGD", "VND")
 CURRENCY_LABELS: tuple[tuple[str, str], ...] = (
     ("CNY", "人民币"),
@@ -222,14 +224,31 @@ def month_accrued(
     return total + accrued(settings, moment)
 
 
+def cn_workday(day: date) -> bool:
+    """Mainland China workday: weekdays minus holidays, plus 调休."""
+    try:
+        return bool(is_workday(day))
+    except NotImplementedError:
+        return day.weekday() < 5
+
+
+def remaining_workdays(moment: datetime) -> int:
+    last = calendar.monthrange(moment.year, moment.month)[1]
+    return sum(
+        1
+        for day in range(moment.day + 1, last + 1)
+        if cn_workday(date(moment.year, moment.month, day))
+    )
+
+
 def month_remaining(settings: PaySettings, moment: datetime) -> Decimal:
-    days = calendar.monthrange(moment.year, moment.month)[1]
-    leftover_days = days - moment.day
     daily = daily_pay(settings)
-    unfinished = daily - accrued(settings, moment)
-    if unfinished < 0:
-        unfinished = Decimal(0)
-    return unfinished + daily * leftover_days
+    unfinished = Decimal(0)
+    if cn_workday(moment.date()):
+        unfinished = daily - accrued(settings, moment)
+        if unfinished < 0:
+            unfinished = Decimal(0)
+    return unfinished + daily * remaining_workdays(moment)
 
 
 def month_days(moment: datetime) -> int:

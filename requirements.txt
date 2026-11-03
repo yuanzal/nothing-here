@@ -3,3 +3,4 @@
 PyQt6==6.11.0
 PyQt6-WebEngine==6.11.0
 pynput>=1.7.6
+chinesecalendar>=1.11.0
