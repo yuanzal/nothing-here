@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QColorDialog, QInputDialog, QMenu, QMessageBox, QSys
 
 from nothing_here.domain.daily import GOAL_MAX, GOAL_MIN
 from nothing_here.domain.loaf import CURRENCY_LABELS
+from nothing_here.input.hotkey import display_hotkey
 from nothing_here.ui.app_mark import app_icon
 from nothing_here.ui.skins import skins
 
@@ -41,6 +42,7 @@ class Tray(QObject):
     loaf_board_chosen = pyqtSignal()
     skin_chosen = pyqtSignal(str)
     suppress_chosen = pyqtSignal()
+    hide_hotkey_edit_chosen = pyqtSignal()
 
     def __init__(
         self,
@@ -61,6 +63,7 @@ class Tray(QObject):
         read_card: str = "medium",
         read_font: str = "medium",
         read_leading: str = "medium",
+        hide_hotkey: str = "ctrl+alt+s",
     ) -> None:
         super().__init__()
         self._goal = goal
@@ -115,7 +118,8 @@ class Tray(QObject):
         menu.addSeparator()
         self._build_loaf_menu(menu)
         menu.addSeparator()
-        suppress_action = menu.addAction("全部隐藏    Ctrl+Alt+S")
+        self._suppress_action = menu.addAction(_suppress_label(hide_hotkey))
+        menu.addAction("隐藏热键…").triggered.connect(self.hide_hotkey_edit_chosen.emit)
         self._build_style_menu(menu)
         self._float_action = menu.addAction("浮在窗口上")
         self._float_action.setCheckable(True)
@@ -135,7 +139,7 @@ class Tray(QObject):
         self._exam_action.setToolTip("暂不可用")
         menu.addSeparator()
         quit_action = menu.addAction("退出")
-        suppress_action.triggered.connect(self.suppress_chosen.emit)
+        self._suppress_action.triggered.connect(self.suppress_chosen.emit)
         self._goal_action.triggered.connect(self._edit_goal)
         self._word_action.triggered.connect(self._keep_word_surface)
         self._read_action.triggered.connect(self._choose_read_surface)
@@ -160,6 +164,9 @@ class Tray(QObject):
         self._rebuild_slain()
         self.set_surface(self._surface)
         self._icon.show()
+
+    def set_hide_hotkey(self, combo: str) -> None:
+        self._suppress_action.setText(_suppress_label(combo))
 
     def set_card_hidden(self, hidden: bool) -> None:
         self._card_hide.blockSignals(True)
@@ -441,6 +448,10 @@ def _check_only(actions: dict[str, QAction], value: str) -> None:
 
 def _goal_label(collected: int, goal: int) -> str:
     return f"每日目标 {collected}/{goal}"
+
+
+def _suppress_label(combo: str) -> str:
+    return f"全部隐藏    {display_hotkey(combo)}"
 
 
 def _text_seed(preset: str, text_color: Optional[str]) -> QColor:

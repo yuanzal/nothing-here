@@ -12,6 +12,7 @@ from typing import Optional
 from nothing_here.domain.loaf import CURRENCIES, DEFAULT_GOODS, Good
 from nothing_here.domain.read import disambiguate_title
 from nothing_here.domain.spell import MISS_LIMIT
+from nothing_here.input.hotkey import DEFAULT_HIDE_HOTKEY, parse_hotkey
 
 
 def default_db_path() -> Path:
@@ -43,6 +44,7 @@ class AppState:
     read_font: str = "medium"
     read_leading: str = "medium"
     current_book: Optional[str] = None
+    hide_hotkey: str = DEFAULT_HIDE_HOTKEY
 
 
 @dataclass(frozen=True)
@@ -126,7 +128,8 @@ class Store:
                 fill_color TEXT,
                 fill_alpha INTEGER,
                 surface_id TEXT NOT NULL DEFAULT 'word',
-                button_preset TEXT NOT NULL DEFAULT 'light'
+                button_preset TEXT NOT NULL DEFAULT 'light',
+                hide_hotkey TEXT NOT NULL DEFAULT 'ctrl+alt+s'
             );
 
             CREATE TABLE IF NOT EXISTS slain (
@@ -249,6 +252,10 @@ class Store:
         for name, decl in read_columns:
             if name not in existing:
                 self._conn.execute(f"ALTER TABLE app_state ADD COLUMN {name} {decl}")
+        if "hide_hotkey" not in existing:
+            self._conn.execute(
+                "ALTER TABLE app_state ADD COLUMN hide_hotkey TEXT NOT NULL DEFAULT 'ctrl+alt+s'"
+            )
         daily_cols = {str(row[1]) for row in self._conn.execute("PRAGMA table_info(daily_state)")}
         daily_defaults = (
             ("spell_mode", "TEXT NOT NULL DEFAULT 'normal'"),
@@ -363,7 +370,8 @@ class Store:
                    x1, y1, x2, y2, x3, y3, floating, daily_goal,
                    style_preset, text_color, fill_color, fill_alpha,
                    surface_id, button_preset,
-                   read_x, read_y, read_card, read_font, read_leading, current_book
+                   read_x, read_y, read_card, read_font, read_leading, current_book,
+                   hide_hotkey
             FROM app_state WHERE id = 1
             """
         ).fetchone()
@@ -395,6 +403,7 @@ class Store:
             read_font,
             read_leading,
             current_book,
+            hide_hotkey,
         ) = row
         word, origin = _migrate_current(
             slot1,
@@ -430,6 +439,7 @@ class Store:
             read_font=_choice(read_font, ("small", "medium", "large"), "medium"),
             read_leading=_choice(read_leading, ("tight", "medium", "loose"), "medium"),
             current_book=_slot(current_book),
+            hide_hotkey=parse_hotkey(hide_hotkey) or DEFAULT_HIDE_HOTKEY,
         )
 
     def save_state(self, state: AppState) -> None:
@@ -442,12 +452,13 @@ class Store:
                 x1, y1, x2, y2, x3, y3, floating, daily_goal,
                 style_preset, text_color, fill_color, fill_alpha,
                 surface_id, button_preset,
-                read_x, read_y, read_card, read_font, read_leading, current_book
+                read_x, read_y, read_card, read_font, read_leading, current_book,
+                hide_hotkey
             )
             VALUES (
                 1, ?, ?, ?, NULL, NULL, ?, ?, NULL, NULL, NULL, NULL, ?, ?,
                 ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?
             )
             ON CONFLICT(id) DO UPDATE SET
                 hidden = excluded.hidden,
@@ -474,7 +485,8 @@ class Store:
                 read_card = excluded.read_card,
                 read_font = excluded.read_font,
                 read_leading = excluded.read_leading,
-                current_book = excluded.current_book
+                current_book = excluded.current_book,
+                hide_hotkey = excluded.hide_hotkey
             """,
             (
                 1 if state.hidden else 0,
@@ -491,6 +503,7 @@ class Store:
                 _choice(state.read_font, ("small", "medium", "large"), "medium"),
                 _choice(state.read_leading, ("tight", "medium", "loose"), "medium"),
                 state.current_book,
+                parse_hotkey(state.hide_hotkey) or DEFAULT_HIDE_HOTKEY,
             ),
         )
         self._conn.commit()

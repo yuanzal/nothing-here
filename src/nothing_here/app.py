@@ -57,12 +57,13 @@ from nothing_here.domain.spell import (
     toggle_example,
 )
 from nothing_here.fx import fetch_eur_rates
-from nothing_here.input.hotkey import HotkeyListener
+from nothing_here.input.hotkey import DEFAULT_HIDE_HOTKEY, HotkeyListener, parse_hotkey
 from nothing_here.storage.db import AppState, DailyRecord, LoafRecord, Store
 from nothing_here.ui.app_mark import app_icon
 from nothing_here.ui.card_window import CardWindow, Face
 from nothing_here.ui.read_window import READ_CARD_SIZE, READ_FONT_PX, READ_LEADING, ReadWindow
 from nothing_here.ui.skins import skin_for
+from nothing_here.ui.hotkey_dialog import HotkeyDialog
 from nothing_here.ui.tray import Tray
 from nothing_here.ui.wage_strip import WageStrip
 from nothing_here.ui.work_status_dialog import WorkStatusDialog
@@ -138,6 +139,7 @@ class App(QObject):
         self._read_card = persisted.read_card
         self._read_font = persisted.read_font
         self._read_leading = persisted.read_leading
+        self._hide_hotkey = parse_hotkey(persisted.hide_hotkey) or DEFAULT_HIDE_HOTKEY
         self._books = self._store.list_books()
         known_books = {book.book_id for book in self._books}
         self._current_book = persisted.current_book if persisted.current_book in known_books else None
@@ -195,6 +197,7 @@ class App(QObject):
             read_card=self._read_card,
             read_font=self._read_font,
             read_leading=self._read_leading,
+            hide_hotkey=self._hide_hotkey,
         )
         self._sync_loaf_tray()
         self._tray.set_card_hidden(self._hidden)
@@ -220,9 +223,10 @@ class App(QObject):
         self._tray.loaf_board_chosen.connect(self.open_loaf_board)
         self._tray.skin_chosen.connect(self.set_skin)
         self._tray.suppress_chosen.connect(self.toggle_visibility)
+        self._tray.hide_hotkey_edit_chosen.connect(self.edit_hide_hotkey)
         self._tray.set_skin(self._skin_id)
         self.visibility_hotkey_pressed.connect(self.toggle_visibility)
-        self._hotkey = HotkeyListener(self.visibility_hotkey_pressed.emit)
+        self._hotkey = HotkeyListener(self.visibility_hotkey_pressed.emit, self._hide_hotkey)
         self._hotkey.start()
         self._day_timer = QTimer(self)
         self._day_timer.timeout.connect(self._check_day)
@@ -396,6 +400,16 @@ class App(QObject):
         self._board_held = board_on
         if board_on and self._board is not None:
             self._board.hide()
+
+    def edit_hide_hotkey(self) -> None:
+        self._hotkey.stop()
+        dialog = HotkeyDialog(self._hide_hotkey)
+        if dialog.exec():
+            self._hide_hotkey = dialog.combo()
+            self._tray.set_hide_hotkey(self._hide_hotkey)
+            self._persist()
+        self._hotkey.set_combo(self._hide_hotkey)
+        self._hotkey.start()
 
     def switch_source(self, source_id: str) -> None:
         if self._burning or self._surface_id != "word" or source_id not in self._source_by_id:
@@ -1194,6 +1208,7 @@ class App(QObject):
                 read_font=self._read_font,
                 read_leading=self._read_leading,
                 current_book=self._current_book,
+                hide_hotkey=self._hide_hotkey,
             )
         )
         self._store.save_daily(

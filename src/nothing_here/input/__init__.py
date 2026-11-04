@@ -1,3 +1,3 @@
-from .hotkey import HotkeyListener
+from .hotkey import DEFAULT_HIDE_HOTKEY, HotkeyListener, parse_hotkey
 
-__all__ = ["HotkeyListener"]
+__all__ = ["DEFAULT_HIDE_HOTKEY", "HotkeyListener", "parse_hotkey"]
