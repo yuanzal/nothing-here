@@ -36,6 +36,12 @@ def _preferred_width(widget: QWidget, work_width: int) -> int:
     return max(1, min(int(width), max(1, work_width)))
 
 
+def layer_matches(widget: QWidget, floating: bool) -> bool:
+    """窗口标志仍是创建时那一层时，可以隐藏后再显示，不必重新嵌进桌面。"""
+    on_top = bool(widget.windowFlags() & Qt.WindowType.WindowStaysOnTopHint)
+    return on_top == bool(floating)
+
+
 def clamp_origin(
     x: int,
     y: int,

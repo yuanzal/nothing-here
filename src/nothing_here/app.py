@@ -14,7 +14,7 @@ from PyQt6.QtCore import QObject, QRect, QThread, QTimer, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
 from nothing_here import __version__
-from nothing_here.desktop.host import DesktopHost
+from nothing_here.desktop.host import DesktopHost, layer_matches
 from nothing_here.domain.formats import SUPPORTED_SUFFIXES, dialog_filter, extract_book_text
 from nothing_here.domain.loaf import (
     Good,
@@ -149,6 +149,7 @@ class App(QObject):
         self._offset = 0
         self._chapters: tuple[int, ...] = (0,)
         self._page_starts: tuple[int, ...] = (0,)
+        self._read_layout_key: Optional[tuple] = None
         if self._current_book:
             self._load_open_book(self._current_book)
         loaf = self._store.load_loaf()
@@ -276,7 +277,7 @@ class App(QObject):
             self._notify_embed_failed()
             self._persist()
             return
-        if not self._open_card(Face.FRONT):
+        if not self._present_card():
             self._notify_embed_failed()
             self._persist()
             return
@@ -292,7 +293,7 @@ class App(QObject):
             return
         self._take_pending_slay()
         self._spell = dismiss_invite_on_hide(self._spell)
-        self._destroy_windows()
+        self._conceal_card()
         self._view = ViewState.HIDDEN
         self._hidden = True
         self._face = Face.FRONT
@@ -393,10 +394,10 @@ class App(QObject):
         if card_on:
             self._take_pending_slay()
             self._spell = dismiss_invite_on_hide(self._spell)
-            self._destroy_windows()
+            self._conceal_card()
             self._view = ViewState.HIDDEN
             self._face = Face.FRONT
-        self._close_loaf()
+        self._conceal_loaf()
         self._board_held = board_on
         if board_on and self._board is not None:
             self._board.hide()
@@ -968,6 +969,52 @@ class App(QObject):
             self._card.finish_burn()
         self._persist()
 
+    def _present_card(self) -> bool:
+        card = self._card
+        if card is None or not self._card_reusable(card):
+            return self._open_card(self._face)
+        if isinstance(card, ReadWindow):
+            self._reveal_read(card)
+        else:
+            self._render()
+            card.show()
+        return True
+
+    def _card_reusable(self, card: CardWindow | ReadWindow) -> bool:
+        if self._surface_id == "read":
+            kind_ok = isinstance(card, ReadWindow)
+        else:
+            kind_ok = isinstance(card, CardWindow)
+        return kind_ok and layer_matches(card, self._floating)
+
+    def _reveal_read(self, card: ReadWindow) -> None:
+        if self._read_layout_key != self._read_layout_signature():
+            self._render_read()
+        else:
+            placed = self._host.place([card], card.preferred_height(), [self._read_origin])
+            if self._read_origin is not None and placed:
+                self._read_origin = placed[0]
+            self._host.set_click_through(card, False)
+        card.show()
+
+    def _read_layout_signature(self) -> tuple:
+        return (
+            self._current_book,
+            self._read_card,
+            self._read_font,
+            self._read_leading,
+            len(self._book_text),
+            self._floating,
+        )
+
+    def _conceal_card(self) -> None:
+        if self._card is None:
+            return
+        if isinstance(self._card, CardWindow):
+            self._card.cancel_burn()
+            self._card.release_spell_input()
+        self._card.hide()
+
     def _open_card(self, face: Face) -> bool:
         if self._surface_id == "read":
             return self._open_read_card()
@@ -1074,13 +1121,21 @@ class App(QObject):
 
     def _apply_loaf(self) -> None:
         if self._loaf_hidden or self._suppressed:
-            self._close_loaf()
+            self._conceal_loaf()
             return
+        if self._loaf is not None and not layer_matches(self._loaf, self._floating):
+            self._close_loaf()
         if self._loaf is None:
             self._open_loaf()
             return
         self._dress(self._loaf)
+        self._loaf.show()
+        self._place_loaf()
         self._refresh_loaf()
+
+    def _conceal_loaf(self) -> None:
+        if self._loaf is not None:
+            self._loaf.hide()
 
     def _open_loaf(self) -> bool:
         self._close_loaf()
@@ -1376,11 +1431,12 @@ class App(QObject):
         if not self._current_book:
             self._page_starts = (0,)
             card.show_empty(pixel, ratio)
-            return
-        self._page_starts = card.measure_pages(self._book_text, pixel, ratio)
-        if self._book_text:
-            self._offset = max(0, min(self._offset, len(self._book_text)))
-        card.show_page(self._book_text, self._page_starts, self._offset, pixel, ratio)
+        else:
+            self._page_starts = card.measure_pages(self._book_text, pixel, ratio)
+            if self._book_text:
+                self._offset = max(0, min(self._offset, len(self._book_text)))
+            card.show_page(self._book_text, self._page_starts, self._offset, pixel, ratio)
+        self._read_layout_key = self._read_layout_signature()
 
     def _turn_read(self, kind: str, step: int) -> None:
         if not isinstance(self._card, ReadWindow) or not self._current_book:

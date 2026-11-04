@@ -11,6 +11,7 @@ from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
+from nothing_here.desktop.host import layer_matches
 from nothing_here.ui.card_window import ROSE_SVG, CardWindow, Face
 
 _APP = QApplication.instance() or QApplication(sys.argv)
@@ -22,6 +23,18 @@ def _show(card: CardWindow) -> None:
     card.show()
     QTest.qWaitForWindowExposed(card)
     card._position_body()
+
+
+class LayerMatchTests(unittest.TestCase):
+    def test_stays_on_top_matches_the_floating_layer(self) -> None:
+        card = CardWindow()
+        card.apply_layer(False)
+        self.assertTrue(layer_matches(card, False))
+        self.assertFalse(layer_matches(card, True))
+        card.apply_layer(True)
+        self.assertTrue(layer_matches(card, True))
+        card.close()
+        card.deleteLater()
 
 
 class CardLayerTests(unittest.TestCase):
