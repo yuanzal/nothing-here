@@ -47,10 +47,10 @@ def combo_from_sequence(sequence: QKeySequence) -> str | None:
 class HotkeyDialog(QDialog):
     def __init__(self, current: str) -> None:
         super().__init__()
-        self.setWindowTitle("隐藏热键")
+        self.setWindowTitle("热键设置")
         self._combo = parse_hotkey(current) or DEFAULT_HIDE_HOTKEY
         self._edit = QKeySequenceEdit()
-        self._edit.setMaximumSequenceCount(1)
+        self._edit.setMaximumSequenceLength(1)
         self._edit.setKeySequence(QKeySequence(qt_hotkey(self._combo)))
         self._hint = QLabel("点输入框后按下组合键。必须带 Ctrl、Alt、Shift 或 Win。")
         self._hint.setWordWrap(True)

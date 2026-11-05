@@ -119,7 +119,7 @@ class Tray(QObject):
         self._build_loaf_menu(menu)
         menu.addSeparator()
         self._suppress_action = menu.addAction(_suppress_label(hide_hotkey))
-        menu.addAction("隐藏热键…").triggered.connect(self.hide_hotkey_edit_chosen.emit)
+        menu.addAction("热键设置").triggered.connect(self.hide_hotkey_edit_chosen.emit)
         self._build_style_menu(menu)
         self._float_action = menu.addAction("浮在窗口上")
         self._float_action.setCheckable(True)
