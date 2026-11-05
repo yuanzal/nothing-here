@@ -297,6 +297,7 @@ class App(QObject):
         self._view = ViewState.HIDDEN
         self._hidden = True
         self._face = Face.FRONT
+        self._wake_loaf()
         self._persist()
 
     def change_goal(self, goal: int) -> None:
@@ -976,8 +977,8 @@ class App(QObject):
         if isinstance(card, ReadWindow):
             self._reveal_read(card)
         else:
-            self._render()
             card.show()
+            self._render()
         return True
 
     def _card_reusable(self, card: CardWindow | ReadWindow) -> bool:
@@ -988,14 +989,14 @@ class App(QObject):
         return kind_ok and layer_matches(card, self._floating)
 
     def _reveal_read(self, card: ReadWindow) -> None:
+        card.show()
         if self._read_layout_key != self._read_layout_signature():
             self._render_read()
-        else:
-            placed = self._host.place([card], card.preferred_height(), [self._read_origin])
-            if self._read_origin is not None and placed:
-                self._read_origin = placed[0]
-            self._host.set_click_through(card, False)
-        card.show()
+            return
+        placed = self._host.place([card], card.preferred_height(), [self._read_origin])
+        if self._read_origin is not None and placed:
+            self._read_origin = placed[0]
+        self._host.set_click_through(card, False)
 
     def _read_layout_signature(self) -> tuple:
         return (
@@ -1013,7 +1014,7 @@ class App(QObject):
         if isinstance(self._card, CardWindow):
             self._card.cancel_burn()
             self._card.release_spell_input()
-        self._card.hide()
+        self._host.conceal(self._card)
 
     def _open_card(self, face: Face) -> bool:
         if self._surface_id == "read":
@@ -1135,7 +1136,12 @@ class App(QObject):
 
     def _conceal_loaf(self) -> None:
         if self._loaf is not None:
-            self._loaf.hide()
+            self._host.conceal(self._loaf)
+
+    def _wake_loaf(self) -> None:
+        if self._loaf is None or self._suppressed or self._loaf_hidden or not self._loaf.isVisible():
+            return
+        self._place_loaf()
 
     def _open_loaf(self) -> bool:
         self._close_loaf()
@@ -1153,7 +1159,7 @@ class App(QObject):
                 self._notify_embed_failed()
             return False
         origin = self._loaf_origin or self._default_loaf_origin()
-        self._loaf_origin = self._host.move(strip, origin[0], origin[1])
+        self._loaf_origin = self._host.move(strip, origin[0], origin[1], shown=True)
         strip.show()
         self._loaf = strip
         return True
@@ -1183,6 +1189,8 @@ class App(QObject):
         if text == self._loaf.line():
             return
         self._loaf.set_line(text)
+        if self._suppressed or self._loaf_hidden or not self._loaf.isVisible():
+            return
         self._place_loaf()
 
     def _place_loaf(self) -> None:

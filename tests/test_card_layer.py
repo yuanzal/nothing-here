@@ -11,7 +11,7 @@ from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtTest import QTest
 from PyQt6.QtWidgets import QApplication
 
-from nothing_here.desktop.host import layer_matches
+from nothing_here.desktop.host import SWP_NOACTIVATE, SWP_SHOWWINDOW, layer_matches, window_pos_flags
 from nothing_here.ui.card_window import ROSE_SVG, CardWindow, Face
 
 _APP = QApplication.instance() or QApplication(sys.argv)
@@ -23,6 +23,15 @@ def _show(card: CardWindow) -> None:
     card.show()
     QTest.qWaitForWindowExposed(card)
     card._position_body()
+
+
+class WindowPosFlagTests(unittest.TestCase):
+    def test_hidden_window_is_not_forced_visible(self) -> None:
+        shown = window_pos_flags(True)
+        hidden = window_pos_flags(False)
+        self.assertEqual(shown & SWP_SHOWWINDOW, SWP_SHOWWINDOW)
+        self.assertEqual(hidden & SWP_SHOWWINDOW, 0)
+        self.assertEqual(hidden & SWP_NOACTIVATE, SWP_NOACTIVATE)
 
 
 class LayerMatchTests(unittest.TestCase):

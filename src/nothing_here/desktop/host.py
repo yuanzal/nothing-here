@@ -17,6 +17,7 @@ SWP_NOMOVE = 0x0002
 SWP_NOACTIVATE = 0x0010
 SWP_FRAMECHANGED = 0x0020
 SWP_SHOWWINDOW = 0x0040
+SW_HIDE = 0
 WM_SPAWN_WORKER = 0x052C
 HWND_TOP = 0
 HWND_TOPMOST = -1
@@ -34,6 +35,18 @@ def _preferred_width(widget: QWidget, work_width: int) -> int:
     if not width or width <= 0:
         width = CARD_WIDTH
     return max(1, min(int(width), max(1, work_width)))
+
+
+def window_pos_flags(shown: bool) -> int:
+    """摆位置时，只有窗口仍应可见才带 SWP_SHOWWINDOW。
+
+    嵌进桌面后，对已隐藏的薪条再 SetWindowPos(SWP_SHOWWINDOW) 会把原生窗口
+    拉回来，Qt 却仍认为它是隐藏的：画面停住，鼠标也进不去。
+    """
+    flags = SWP_NOACTIVATE
+    if shown:
+        flags |= SWP_SHOWWINDOW
+    return flags
 
 
 def layer_matches(widget: QWidget, floating: bool) -> bool:
@@ -96,6 +109,8 @@ def _user32() -> ctypes.WinDLL:
         ctypes.c_int,
         wintypes.UINT,
     ]
+    dll.ShowWindow.restype = wintypes.BOOL
+    dll.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
     dll.GetForegroundWindow.restype = wintypes.HWND
     dll.GetForegroundWindow.argtypes = []
     dll.SetForegroundWindow.restype = wintypes.BOOL
@@ -213,7 +228,19 @@ class DesktopHost:
             placed.append(origin)
         return placed
 
-    def move(self, widget: QWidget, x: int, y: int, height: Optional[int] = None) -> tuple[int, int]:
+    def conceal(self, widget: QWidget) -> None:
+        widget.hide()
+        hwnd = wintypes.HWND(int(widget.winId()))
+        self._user32.ShowWindow(hwnd, SW_HIDE)
+
+    def move(
+        self,
+        widget: QWidget,
+        x: int,
+        y: int,
+        height: Optional[int] = None,
+        shown: Optional[bool] = None,
+    ) -> tuple[int, int]:
         work = self.work_rect()
         preferred = widget.preferred_height()  # type: ignore[attr-defined]
         width = _preferred_width(widget, work.width())
@@ -221,11 +248,19 @@ class DesktopHost:
             height = min(preferred, work.height())
         height = max(1, min(preferred, height, work.height()))
         x, y = clamp_origin(x, y, width, height, work.left(), work.top(), work.width(), work.height())
-        self._commit_geometry(widget, x, y, width, height)
+        self._commit_geometry(widget, x, y, width, height, widget.isVisible() if shown is None else shown)
         widget.set_screen_origin(x, y)  # type: ignore[attr-defined]
         return (x, y)
 
-    def _commit_geometry(self, widget: QWidget, x: int, y: int, width: int, height: int) -> None:
+    def _commit_geometry(
+        self,
+        widget: QWidget,
+        x: int,
+        y: int,
+        width: int,
+        height: int,
+        shown: bool,
+    ) -> None:
         # Qt geometry is in logical pixels. SetWindowPos wants physical pixels.
         ratio = widget.devicePixelRatioF()
         widget.setGeometry(x, y, width, height)
@@ -237,7 +272,7 @@ class DesktopHost:
             int(round(y * ratio)),
             int(round(width * ratio)),
             int(round(height * ratio)),
-            SWP_NOACTIVATE | SWP_SHOWWINDOW,
+            window_pos_flags(shown),
         )
 
     def _insert_after(self) -> wintypes.HWND:
