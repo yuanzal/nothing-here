@@ -29,6 +29,7 @@ jobs:
       - name: Create zip
         shell: pwsh
         run: |
+          # Tag builds name the zip from GITHUB_REF_NAME, not __init__.py.
           $Version = python scripts/package_version.py
           Compress-Archive -Path dist/NothingHere/* -DestinationPath "dist/NothingHere-$Version-win64.zip" -Force
 
